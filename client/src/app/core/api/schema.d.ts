@@ -3933,6 +3933,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/folder-picker": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Api Folder Picker
+         * @description Open the server host's native folder chooser for a local operator.
+         */
+        post: operations["api_folder_picker_api_system_folder_picker_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/timeline": {
         parameters: {
             query?: never;
@@ -5168,6 +5188,16 @@ export interface components {
             path: string;
             /** Photo Count */
             photo_count: number;
+        };
+        /** FolderPickerRequest */
+        FolderPickerRequest: {
+            /** Initial Dir */
+            initial_dir?: string | null;
+        };
+        /** FolderPickerResponse */
+        FolderPickerResponse: {
+            /** Path */
+            path: string | null;
         };
         /**
          * FoldersResponse
@@ -12776,6 +12806,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatsTopCamera"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_folder_picker_api_system_folder_picker_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FolderPickerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderPickerResponse"];
                 };
             };
             /** @description Validation Error */

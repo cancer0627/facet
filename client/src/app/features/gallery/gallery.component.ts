@@ -130,6 +130,18 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
         }
       </mat-form-field>
 
+      <!-- Keep manual scanning reachable after the first import.  The empty
+           state has a larger call-to-action, but it disappears as soon as the
+           library contains one photo. -->
+      @if (canShowScanButton()) {
+        <button mat-icon-button class="!hidden lg:!inline-flex"
+                [matTooltip]="I18N.scan.start_button | translate"
+                [attr.aria-label]="I18N.scan.start_button | translate"
+                (click)="openScanLauncher()">
+          <mat-icon>add_photo_alternate</mat-icon>
+        </button>
+      }
+
       <!-- Keep top N%: server-rank the current view by the current sort and
            select the bottom (100-N)% for review/rejection via the selection bar. -->
       @if (auth.isEdition() && store.total() > 0) {

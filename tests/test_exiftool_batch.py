@@ -125,6 +125,30 @@ def _make_instance(monkeypatch):
     return ExifToolBatch()
 
 
+def test_unexecutable_exiftool_is_treated_as_optional(monkeypatch):
+    """A PATH hit that is a directory raises EACCES, not FileNotFoundError."""
+    monkeypatch.setattr(
+        exiftool_batch.subprocess,
+        'Popen',
+        lambda *args, **kwargs: (_ for _ in ()).throw(PermissionError(13, 'denied')),
+    )
+
+    inst = ExifToolBatch()
+
+    assert inst.process is None
+
+
+def test_batch_skips_subprocess_when_optional_exiftool_is_unavailable(monkeypatch):
+    inst = _make_instance(monkeypatch)
+    monkeypatch.setattr(
+        exiftool_batch.subprocess,
+        'run',
+        lambda *args, **kwargs: pytest.fail('unavailable exiftool must not be retried'),
+    )
+
+    assert inst.get_metadata_batch(['/photos/a.jpg']) == {}
+
+
 def test_get_metadata_serializes_concurrent_threads(monkeypatch):
     """F26: two interleaved threads must each get their own photo's metadata."""
     stdout = _CrossStdout()

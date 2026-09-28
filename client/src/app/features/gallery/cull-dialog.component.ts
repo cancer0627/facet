@@ -77,9 +77,17 @@ interface CullResponse {
 
       @if (needsTarget()) {
         <label for="cullTargetDir" class="block text-xs opacity-60 mb-1">{{ I18N.cull.target_dir | translate }}</label>
-        <input id="cullTargetDir" type="text" [value]="targetDir()" (input)="onTargetInput($event)"
-               class="w-full text-sm font-mono rounded border border-[var(--mat-sys-outline-variant)] bg-transparent px-2 py-1.5 mb-3"
-               placeholder="/path/to/folder" />
+        <button id="cullTargetDir" type="button" (click)="chooseTargetFolder()"
+                [disabled]="choosingFolder() || busy()"
+                class="w-full flex items-center gap-2 text-left text-sm font-mono rounded border border-[var(--mat-sys-outline-variant)] bg-transparent px-2 py-1.5 mb-3 cursor-pointer disabled:cursor-wait">
+          <mat-icon class="!text-base !w-5 !h-5 !leading-5 shrink-0">folder_open</mat-icon>
+          <span class="truncate flex-1" [class.opacity-50]="!targetDir()">
+            {{ targetDir() || '/path/to/folder' }}
+          </span>
+          @if (choosingFolder()) {
+            <mat-spinner diameter="16" [attr.aria-label]="I18N.ui.labels.loading | translate" />
+          }
+        </button>
       }
 
       <mat-checkbox [checked]="includeCompanions()" (change)="includeCompanions.set($event.checked); preview.set(null)"
@@ -160,6 +168,7 @@ export class CullDialogComponent {
     affected: string[]; skipped: string[]; excluded: number; matched: number; siblings: number;
   } | null>(null);
   protected readonly busy = signal(false);
+  protected readonly choosingFolder = signal(false);
   protected readonly errorDetail = signal<string | null>(null);
 
   protected readonly needsTarget = computed(() => this.action() !== 'trash_rejects');
@@ -171,10 +180,26 @@ export class CullDialogComponent {
     this.errorDetail.set(null);
   }
 
-  protected onTargetInput(event: Event): void {
-    this.targetDir.set((event.target as HTMLInputElement).value);
-    this.preview.set(null);
+  async chooseTargetFolder(): Promise<void> {
+    if (this.choosingFolder()) return;
+    this.choosingFolder.set(true);
     this.errorDetail.set(null);
+    try {
+      const response = await firstValueFrom(this.api.post<{ path: string | null }>(
+        '/system/folder-picker',
+        { initial_dir: this.targetDir() || null },
+      ));
+      // Cancellation leaves the current choice and its valid preview intact.
+      if (response.path) {
+        this.targetDir.set(response.path);
+        this.preview.set(null);
+      }
+    } catch (error) {
+      this.errorDetail.set(extractErrorDetail(error) ?? null);
+      this.snackBar.open(this.i18n.t(I18N.cull.error), '', { duration: 3000 });
+    } finally {
+      this.choosingFolder.set(false);
+    }
   }
 
   private body(dryRun: boolean): CullRequest {

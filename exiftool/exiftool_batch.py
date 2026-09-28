@@ -46,8 +46,11 @@ class ExifToolBatch:
                 encoding='utf-8',
                 errors='replace'
             )
-        except FileNotFoundError:
-            # ExifTool not installed
+        except OSError:
+            # ExifTool is absent or not executable.  A source checkout has an
+            # ``exiftool/`` package directory; when PATH contains the current
+            # directory, some platforms report that directory as EACCES rather
+            # than ENOENT.  Both cases mean the optional helper is unavailable.
             self.process = None
 
     def close(self):
@@ -148,6 +151,12 @@ class ExifToolBatch:
             Dict mapping path -> EXIF dict
         """
         if not image_paths:
+            return {}
+
+        # No persistent process means the optional executable could not be
+        # started.  Let callers use their per-image Pillow/exifread fallback
+        # instead of retrying the same unavailable command for every chunk.
+        if self.process is None:
             return {}
 
         results = {}

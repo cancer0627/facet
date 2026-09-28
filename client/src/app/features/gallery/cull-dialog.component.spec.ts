@@ -42,6 +42,29 @@ describe('CullDialogComponent', () => {
     expect(read<boolean>('needsTarget')).toBe(true);
   });
 
+  it('uses the system folder picker and keeps its absolute path', async () => {
+    build();
+    post.mockReturnValueOnce(of({ path: '/Users/test/Pictures/Exports' }));
+
+    await component.chooseTargetFolder();
+
+    expect(post).toHaveBeenCalledWith('/system/folder-picker', { initial_dir: null });
+    expect(read<string>('targetDir')).toBe('/Users/test/Pictures/Exports');
+  });
+
+  it('keeps the current target and preview when the system picker is cancelled', async () => {
+    build();
+    set('targetDir', '/existing');
+    set('preview', { affected: ['/a.jpg'], skipped: [], excluded: 0, matched: 1, siblings: 0 });
+    post.mockReturnValueOnce(of({ path: null }));
+
+    await component.chooseTargetFolder();
+
+    expect(post).toHaveBeenCalledWith('/system/folder-picker', { initial_dir: '/existing' });
+    expect(read<string>('targetDir')).toBe('/existing');
+    expect(read('preview')).not.toBeNull();
+  });
+
   it('trash does not require a target dir', () => {
     build();
     (component as unknown as { setAction(a: string): void }).setAction('trash_rejects');

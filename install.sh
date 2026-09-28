@@ -50,13 +50,23 @@ echo -e "${BLUE}╚════════════════════�
 echo ""
 
 # --- Step 1: Find Python ---
+HOST_OS="$(uname -s)"
+HOST_ARCH="$(uname -m)"
+MAX_PYTHON_MINOR=13
+PYTHON_REQUIREMENT="3.10–3.13"
+if [[ "$HOST_OS" == "Darwin" && "$HOST_ARCH" == "x86_64" ]]; then
+    # numba/llvmlite no longer publish Intel macOS wheels for Python 3.12+.
+    MAX_PYTHON_MINOR=11
+    PYTHON_REQUIREMENT="3.10–3.11 on Intel macOS"
+fi
+
 PYTHON=""
 for cmd in python3.12 python3.13 python3.11 python3.10 python3 python; do
     if command -v "$cmd" &>/dev/null; then
         version=$("$cmd" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || true)
         major=$("$cmd" -c "import sys; print(sys.version_info.major)" 2>/dev/null || true)
         minor=$("$cmd" -c "import sys; print(sys.version_info.minor)" 2>/dev/null || true)
-        if [[ "$major" == "3" && "$minor" -ge 10 ]]; then
+        if [[ "$major" == "3" && "$minor" -ge 10 && "$minor" -le "$MAX_PYTHON_MINOR" ]]; then
             PYTHON="$cmd"
             break
         fi
@@ -64,22 +74,45 @@ for cmd in python3.12 python3.13 python3.11 python3.10 python3 python; do
 done
 
 if [[ -z "$PYTHON" ]]; then
-    err "Python 3.10+ not found. Install Python 3.12 from https://python.org"
+    err "Compatible Python not found (requires $PYTHON_REQUIREMENT)."
+    if command -v python3 &>/dev/null; then
+        warn "Found $(python3 --version), but required binary dependencies do not support it on every platform"
+    fi
     exit 1
 fi
 ok "Python: $($PYTHON --version)"
 
 # --- Step 2: Virtual environment ---
 if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    env_minor=$("$VIRTUAL_ENV/bin/python" -c "import sys; print(sys.version_info.minor)" 2>/dev/null || true)
+    if [[ ! "$env_minor" =~ ^[0-9]+$ || "$env_minor" -lt 10 || "$env_minor" -gt "$MAX_PYTHON_MINOR" ]]; then
+        err "Active virtual environment uses an unsupported Python: $VIRTUAL_ENV"
+        err "Deactivate it and rerun this installer with Python $PYTHON_REQUIREMENT"
+        exit 1
+    fi
+    PYTHON="$VIRTUAL_ENV/bin/python"
     ok "Virtual environment: $VIRTUAL_ENV"
 else
     if [[ ! -d "venv" ]]; then
         info "Creating virtual environment..."
         $PYTHON -m venv venv
+    else
+        venv_minor=$(venv/bin/python -c "import sys; print(sys.version_info.minor)" 2>/dev/null || true)
+        if [[ ! "$venv_minor" =~ ^[0-9]+$ || "$venv_minor" -lt 10 || "$venv_minor" -gt "$MAX_PYTHON_MINOR" ]]; then
+            err "Existing venv uses an unsupported Python: $(venv/bin/python --version 2>/dev/null || echo unknown)"
+            err "Move or remove ./venv, then rerun this installer with Python $PYTHON_REQUIREMENT"
+            exit 1
+        fi
     fi
     source venv/bin/activate
+    PYTHON="$VIRTUAL_ENV/bin/python"
     ok "Virtual environment: $VIRTUAL_ENV"
 fi
+
+# Keep uv's cache with the virtual environment by default. Sandboxed runners
+# may not allow access to ~/.cache/uv even when the project itself is writable.
+# Respect an explicit UV_CACHE_DIR so operators can still share a cache.
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$VIRTUAL_ENV/.uv-cache}"
 
 # --- Step 3: Install uv (or fall back to pip) ---
 INSTALLER="pip"
@@ -104,8 +137,6 @@ fi
 CUDA_VERSION=""
 TORCH_INDEX=""
 ONNX_PACKAGE="onnxruntime>=1.15.0"
-HOST_OS="$(uname -s)"
-HOST_ARCH="$(uname -m)"
 APPLE_MPS=0
 
 if [[ "$FORCE_CPU" -eq 1 ]]; then
@@ -234,7 +265,7 @@ if [[ "$SKIP_CLIENT" -eq 0 ]]; then
         if command -v node &>/dev/null && command -v npm &>/dev/null; then
             node_version=$(node --version)
             info "Building Angular frontend (Node $node_version)..."
-            (cd client && npm install --no-audit --no-fund && npx ng build)
+            (cd client && npm ci --no-audit --no-fund && npx ng build)
             ok "Angular client built"
         else
             warn "Node.js not found — skipping Angular build"

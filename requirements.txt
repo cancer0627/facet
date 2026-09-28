@@ -41,6 +41,10 @@ insightface>=0.7.0
 # >=0.1.16 also exposes Q-ReAlign (qrealign) — see models/pyiqa_scorer.py
 # PYIQA_MODELS for the registered models and their score ranges.
 pyiqa>=0.1.16
+# Newer numba releases require llvmlite versions without Intel macOS wheels.
+# 0.62.1 resolves to llvmlite 0.45.1, the newest binary wheel available for
+# this platform on the supported Python 3.10/3.11 runtimes.
+numba==0.62.1; sys_platform == "darwin" and platform_machine == "x86_64"
 # pyiqa's liqe/clipiqa archs depend on PyPI openai-clip, which still imports
 # pkg_resources at runtime (LIQE/CLIPIQA); setuptools 81 removed pkg_resources.
 setuptools<81
@@ -56,6 +60,8 @@ setuptools<81
 
 # Scientific Computing
 numpy>=1.24.0
+# The last PyTorch wheel for Intel macOS (2.2.2) was built against NumPy 1.x.
+numpy<2; sys_platform == "darwin" and platform_machine == "x86_64"
 scipy>=1.10.0
 hdbscan>=0.8.40  # Face clustering (standalone library, sklearn's HDBSCAN has epsilon bug)
 

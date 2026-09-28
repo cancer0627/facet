@@ -402,6 +402,7 @@ def create_app() -> FastAPI:
     from api.routers.webdav import router as webdav_router
     from api.routers.immich import router as immich_router
     from api.routers.updates import router as updates_router
+    from api.routers.system_dialogs import router as system_dialogs_router
 
     app.include_router(health_router)
     app.include_router(auth_router)
@@ -439,6 +440,7 @@ def create_app() -> FastAPI:
     app.include_router(frame_router)
     app.include_router(webdav_router)
     app.include_router(immich_router)
+    app.include_router(system_dialogs_router)
 
     # Check for plaintext passwords at startup
     from api.auth import check_legacy_password_warnings
