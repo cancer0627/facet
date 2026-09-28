@@ -3448,6 +3448,10 @@
           "label": "Aggregate Score"
         },
         {
+          "column": "vcg_submission_score",
+          "label": "Visual China Submission Score"
+        },
+        {
           "column": "aesthetic",
           "label": "Aesthetic"
         },

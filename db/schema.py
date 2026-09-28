@@ -135,6 +135,10 @@ PHOTOS_COLUMNS = [
     ('face_quality_iqa', 'REAL'),    # TOPIQ NR-Face (dedicated face quality)
     ('liqe_score', 'REAL'),          # LIQE quality score
     ('aesthetic_clip', 'REAL'),      # CLIP/SigLIP text-projection aesthetic (supplementary, free from cached embedding)
+    ('vcg_suitability_score', 'REAL'),  # Visual China stock-library suitability from CLIP/SigLIP prompts
+    ('vcg_submission_score', 'REAL'),   # 0.65 aggregate + 0.35 suitability
+    ('vcg_score_version', 'TEXT'),      # prompt/formula version used for the score
+    ('vcg_scored_at', 'TEXT'),          # UTC calculation time
     # Extended IQA tier (optional, config-gated; never replaces TOPIQ)
     ('qrealign_score', 'REAL'),      # Q-ReAlign-Mini LLM-based IQA (normalized 0-10)
     ('aesthetic_v25', 'REAL'),       # Aesthetic Predictor V2.5 (SigLIP head)
@@ -395,6 +399,7 @@ INDEXES = [
     # correlated subquery into learned_scores (~0.5s/page). Standalone (X DESC,
     # path) for the same MULTI-INDEX-OR reason as idx_moment_confidence above.
     ('idx_learned_score', 'photos', 'learned_score DESC, path'),
+    ('idx_photos_vcg_submission_score', 'photos', 'vcg_submission_score DESC, path'),
     # Covering index for _shoot_type_evidence's GROUP BY (category,
     # narrative_moment): leading columns match the GROUP BY exactly, with
     # face_count and date_taken (read by the conditional SUMs) appended so the

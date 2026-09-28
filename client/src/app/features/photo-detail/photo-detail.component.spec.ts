@@ -8,6 +8,7 @@ import { signal } from '@angular/core';
 import { ApiService } from '../../core/services/api.service';
 import { AuthService } from '../../core/services/auth.service';
 import { I18nService } from '../../core/services/i18n.service';
+import type { Photo } from '../../shared/models/photo.model';
 
 // Mock Leaflet via vi.doMock + dynamic import: the component pulls in shared/leaflet
 // (which runs L.Icon.Default.mergeOptions at module load). Without this mock, importing
@@ -35,6 +36,7 @@ describe('PhotoDetailComponent', () => {
     path: '/photos/test.jpg',
     filename: 'test.jpg',
     aggregate: 8.5,
+    vcg_submission_score: 6.91,
     aesthetic: 7.2,
     face_count: 1,
     face_quality: 6.5,
@@ -72,7 +74,7 @@ describe('PhotoDetailComponent', () => {
         { provide: ActivatedRoute, useValue: mockRoute },
         { provide: AuthService, useValue: mockAuth },
         { provide: MatDialog, useValue: mockDialog },
-        { provide: I18nService, useValue: { t: (k: string) => k, locale: () => 'en' } },
+        { provide: I18nService, useValue: { t: (k: string) => k, locale: () => 'en', translations: signal({}) } },
       ],
     });
     component = TestBed.inject(PhotoDetailComponent);
@@ -169,6 +171,19 @@ describe('PhotoDetailComponent', () => {
     it('should have stars array [1,2,3,4,5]', () => {
       createComponent();
       expect(component.stars).toEqual([1, 2, 3, 4, 5]);
+    });
+  });
+
+  describe('headline score display', () => {
+    it('shows the Visual China submission score with two decimals', () => {
+      createComponent();
+      const fixture = TestBed.createComponent(PhotoDetailComponent);
+      fixture.componentInstance.photo.set(samplePhoto as unknown as Photo);
+      fixture.detectChanges();
+
+      const text = fixture.nativeElement.textContent as string;
+      expect(text).toContain('sort_options.vcg_submission_score');
+      expect(text).toContain('6.91');
     });
   });
 

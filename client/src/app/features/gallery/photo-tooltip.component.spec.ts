@@ -89,6 +89,27 @@ describe('PhotoTooltipComponent', () => {
     expect(fixture.nativeElement.textContent).toContain('62%');
   });
 
+  it('renders the Visual China submission score with two decimals', () => {
+    fixture.componentInstance.photo.set(makePhoto({ vcg_submission_score: 6.83 }));
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent as string;
+    const headlineScores = fixture.nativeElement.querySelectorAll('[data-score-style="headline"]') as NodeListOf<HTMLElement>;
+    const scoreLayout = fixture.nativeElement.querySelector('[data-score-layout="stacked"]') as HTMLElement;
+    expect(text).toContain('sort_options.vcg_submission_score');
+    expect(text).toContain('6.83');
+    expect(headlineScores).toHaveLength(2);
+    expect(headlineScores[1].className).toBe(headlineScores[0].className);
+    expect(scoreLayout.classList).toContain('flex-col');
+  });
+
+  it('renders a placeholder when the Visual China submission score is missing', () => {
+    fixture.componentInstance.photo.set(makePhoto({ vcg_submission_score: null }));
+    fixture.detectChanges();
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('sort_options.vcg_submission_score');
+    expect(text).toContain('—');
+  });
+
   describe('Extended Quality metrics', () => {
     it('renders aesthetic_iaa when present', () => {
       fixture.componentInstance.photo.set(makePhoto({ aesthetic_iaa: 7.3 }));

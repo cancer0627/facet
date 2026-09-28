@@ -402,6 +402,7 @@
   },
   "sort_options": {
     "aggregate": "Puntuación global",
+    "vcg_submission_score": "Puntuación de envío a Visual China",
     "aesthetic": "Estética",
     "date_taken": "Fecha de captura",
     "star_rating": "Clasificación por estrellas",

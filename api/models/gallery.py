@@ -93,6 +93,8 @@ class Photo(BaseModel):
     aesthetic_iaa: Optional[float] = None
     face_quality_iqa: Optional[float] = None
     liqe_score: Optional[float] = None
+    vcg_suitability_score: Optional[float] = None
+    vcg_submission_score: Optional[float] = None
     qrealign_score: Optional[float] = None
     aesthetic_v25: Optional[float] = None
     deqa_score: Optional[float] = None

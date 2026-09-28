@@ -11,6 +11,10 @@ export interface Photo {
   // Scores
   /** Null for a row the scoring pass has not reached yet (e.g. mid-scan). */
   aggregate: number | null;
+  /** Visual China submission estimate; absent/null until the dedicated score is populated. */
+  vcg_submission_score?: number | null;
+  /** Stock-library suitability component used by the submission estimate. */
+  vcg_suitability_score?: number | null;
   aesthetic: number;
   face_quality: number | null;
   comp_score: number | null;

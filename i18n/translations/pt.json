@@ -402,6 +402,7 @@
   },
   "sort_options": {
     "aggregate": "Pontuação agregada",
+    "vcg_submission_score": "Pontuação de candidatura Visual China",
     "aesthetic": "Estética",
     "date_taken": "Data da captura",
     "star_rating": "Classificação por estrelas",

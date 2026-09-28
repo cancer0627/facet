@@ -402,6 +402,7 @@
   },
   "sort_options": {
     "aggregate": "综合评分",
+    "vcg_submission_score": "视觉中国申请分",
     "aesthetic": "美观度",
     "date_taken": "拍摄日期",
     "star_rating": "星级评分",

@@ -208,7 +208,7 @@ const SOCIAL_SOURCE_KEYS: Record<string, string> = {
 
         <!-- Info panel -->
         <div class="lg:w-[380px] lg:shrink-0 lg:overflow-y-auto p-4 space-y-4 text-sm text-[var(--mat-sys-on-surface)]">
-          <!-- Filename + Date + Category + Aggregate -->
+          <!-- Filename + Date + Category + headline scores -->
           <div>
             <div class="font-semibold text-lg">{{ p.filename }}</div>
             @if (p.date_taken) {
@@ -225,7 +225,20 @@ const SOCIAL_SOURCE_KEYS: Record<string, string> = {
                   {{ I18N.culling.reason.better_shot | translate }}
                 </span>
               }
-              <span class="text-[var(--mat-sys-primary)] font-semibold ml-auto">{{ p.aggregate | fixed:1 }}</span>
+              <div class="ml-auto flex flex-col items-end gap-0.5">
+                <div class="flex items-baseline gap-1.5">
+                  <span class="text-xs text-[var(--mat-sys-on-surface-variant)]">{{ I18N.gallery.aggregate_score | translate }}</span>
+                  <span class="text-[var(--mat-sys-primary)] font-semibold">{{ p.aggregate | fixed:1 }}</span>
+                </div>
+                <div class="flex items-baseline gap-1.5">
+                  <span class="text-xs text-[var(--mat-sys-on-surface-variant)]">{{ I18N.sort_options.vcg_submission_score | translate }}</span>
+                  @if (p.vcg_submission_score !== null && p.vcg_submission_score !== undefined) {
+                    <span class="text-[var(--mat-sys-primary)] font-semibold">{{ p.vcg_submission_score | fixed:2 }}</span>
+                  } @else {
+                    <span class="text-[var(--mat-sys-on-surface-variant)] font-medium">—</span>
+                  }
+                </div>
+              </div>
             </div>
           </div>
 

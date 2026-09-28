@@ -402,6 +402,7 @@
   },
   "sort_options": {
     "aggregate": "Aggregate Score",
+    "vcg_submission_score": "Visual China Submission Score",
     "aesthetic": "Aesthetic",
     "date_taken": "Date Taken",
     "star_rating": "Star Rating",

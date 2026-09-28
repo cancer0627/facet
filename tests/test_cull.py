@@ -131,6 +131,31 @@ class TestCullApply:
         assert os.path.isfile(os.path.join(target, "a.jpg"))
         assert os.path.isfile(path)  # original untouched
 
+    def test_copy_keeps_twenty_selected_non_rejected_photos(self, client, tmp_path):
+        paths = [_make_file(tmp_path, f"selected-{i:02d}.jpg") for i in range(20)]
+        db = _db(tmp_path, [(path, 0) for path in paths])
+        target = str(tmp_path / "vcg-application")
+        with (
+            mock.patch(f"{_EXPORT_MODULE}.get_db", _db_cm(db)),
+            mock.patch(f"{_EXPORT_MODULE}._allowed_export_roots", return_value=[str(tmp_path)]),
+            mock.patch("api.path_validation.get_all_scan_directories", return_value=[]),
+            mock.patch("api.path_validation.is_multi_user_enabled", return_value=False),
+        ):
+            preview = client.post("/api/cull/apply", json={
+                "paths": paths, "action": "copy_keeps", "target_dir": target,
+                "dry_run": True, "include_companions": False,
+            })
+            copied = client.post("/api/cull/apply", json={
+                "paths": paths, "action": "copy_keeps", "target_dir": target,
+                "dry_run": False, "include_companions": False,
+            })
+
+        assert preview.status_code == copied.status_code == 200
+        assert preview.json()["would_copy"] == paths
+        assert copied.json()["copied"] == 20
+        assert all(os.path.isfile(path) for path in paths)
+        assert all(os.path.isfile(os.path.join(target, os.path.basename(path))) for path in paths)
+
     def test_companions_included_in_preview(self, client, tmp_path):
         path = _make_file(tmp_path, "a.jpg")
         raw = _make_file(tmp_path, "a.cr2")

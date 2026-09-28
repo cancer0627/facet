@@ -402,6 +402,7 @@
   },
   "sort_options": {
     "aggregate": "Gesamtwertung",
+    "vcg_submission_score": "Visual-China-Einreichungswert",
     "aesthetic": "Ästhetik",
     "date_taken": "Aufnahmedatum",
     "star_rating": "Sternebewertung",

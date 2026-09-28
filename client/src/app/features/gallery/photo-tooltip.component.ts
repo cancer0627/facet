@@ -101,9 +101,19 @@ export class CategoryLabelPipe implements PipeTransform {
               }
             </div>
 
-            <!-- Category + aggregate + star rating -->
-            <div class="flex items-baseline justify-between mb-1.5">
-              <span class="text-[var(--mat-sys-primary)] font-semibold">[{{ p.category | categoryLabel }}] {{ 'tooltip.aggregate' | translate }}: {{ p.aggregate | fixed:1 }}</span>
+            <!-- Category + headline scores + star rating -->
+            <div class="flex items-baseline justify-between mb-1.5 gap-2">
+              <div data-score-layout="stacked" class="flex flex-col">
+                <span data-score-style="headline" class="text-[var(--mat-sys-primary)] font-semibold">[{{ p.category | categoryLabel }}] {{ 'tooltip.aggregate' | translate }}: {{ p.aggregate | fixed:1 }}</span>
+                <span data-score-style="headline" class="text-[var(--mat-sys-primary)] font-semibold">
+                  {{ 'sort_options.vcg_submission_score' | translate }}:
+                  @if (p.vcg_submission_score !== null && p.vcg_submission_score !== undefined) {
+                    {{ p.vcg_submission_score | fixed:2 }}
+                  } @else {
+                    —
+                  }
+                </span>
+              </div>
               @if (p.star_rating) {
                 <span class="text-yellow-400 font-semibold shrink-0 ml-2">★{{ p.star_rating }}</span>
               }

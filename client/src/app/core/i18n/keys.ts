@@ -418,6 +418,7 @@ export const I18N = {
   },
   sort_options: {
     aggregate: "sort_options.aggregate",
+    vcg_submission_score: "sort_options.vcg_submission_score",
     aesthetic: "sort_options.aesthetic",
     date_taken: "sort_options.date_taken",
     star_rating: "sort_options.star_rating",

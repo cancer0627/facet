@@ -760,6 +760,8 @@ class ChunkedMultiPassProcessor:
     def _pass_clip(self, model_dict: Dict, images: Dict, results: Dict):
         """CLIP pass: extract embeddings and aesthetic scores."""
         _ensure_imports()
+        from analyzers.vcg_suitability import build_vcg_axis, score_vcg_suitability
+        from models.tagger import encode_text_prompts
 
         clip_model = model_dict['model']
         preprocess = model_dict['preprocess']
@@ -785,6 +787,22 @@ class ChunkedMultiPassProcessor:
             features_normalized = torch.nn.functional.normalize(features, dim=-1)
             embeddings = features_normalized.cpu().numpy()
 
+            try:
+                def _encode(texts):
+                    encoded = encode_text_prompts(
+                        clip_model,
+                        model_dict.get('model_name', 'ViT-L-14'),
+                        backend,
+                        device,
+                        texts,
+                    )
+                    return encoded.detach().float().cpu().numpy()
+
+                vcg_axis = build_vcg_axis(_encode)
+            except Exception as exc:
+                logger.warning("VCG prompt encoding unavailable; using aggregate fallback: %s", exc)
+                vcg_axis = None
+
             # Get aesthetic scores using MLP head (only available with 768-dim ViT-L-14)
             if hasattr(self.scorer, 'aesthetic_head') and self.scorer.aesthetic_head is not None:
                 from models.aesthetic_head import score_aesthetic
@@ -792,6 +810,9 @@ class ChunkedMultiPassProcessor:
 
         for i, path in enumerate(paths):
             results[path]['clip_embedding'] = embeddings[i].astype(np.float32).tobytes()
+            results[path]['vcg_suitability_score'] = score_vcg_suitability(
+                embeddings[i], vcg_axis
+            )
             if hasattr(self.scorer, 'aesthetic_head') and self.scorer.aesthetic_head is not None:
                 results[path]['aesthetic'] = float(scores[i])
 
@@ -1055,6 +1076,20 @@ class ChunkedMultiPassProcessor:
             aggregate, category = self.scorer.calculate_aggregate_logic(metrics)
             data['aggregate'] = aggregate
             data['category'] = category
+            from analyzers.vcg_suitability import (
+                VCG_SCORE_VERSION,
+                calculate_vcg_submission_score,
+                vcg_scored_at,
+            )
+            suitability = data.get('vcg_suitability_score')
+            if suitability is None:
+                suitability = aggregate
+            data['vcg_suitability_score'] = suitability
+            data['vcg_submission_score'] = calculate_vcg_submission_score(
+                aggregate, suitability
+            )
+            data['vcg_score_version'] = VCG_SCORE_VERSION
+            data['vcg_scored_at'] = vcg_scored_at()
 
             # Store technical scores back in data for _save_results
             data['tech_sharpness'] = tech_sharpness
@@ -1120,6 +1155,10 @@ class ChunkedMultiPassProcessor:
                 'quality_score': data.get('quality_score'),
                 'scoring_model': data.get('scoring_model', 'clip-mlp'),
                 'topiq_score': data.get('topiq_score'),
+                'vcg_suitability_score': data.get('vcg_suitability_score'),
+                'vcg_submission_score': data.get('vcg_submission_score'),
+                'vcg_score_version': data.get('vcg_score_version'),
+                'vcg_scored_at': data.get('vcg_scored_at'),
 
                 # Face fields
                 'face_count': data.get('face_count', 0),

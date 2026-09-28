@@ -162,9 +162,13 @@ async def _fetch_album_photos(conn, album_row, user_id, page, per_page, sort_col
         total = row[0] if row else 0
 
         safe_sort = sort_col if sort_col in VALID_SORT_COLS else 'aggregate'
+        if safe_sort == 'vcg_submission_score' and sort_dir == 'ASC':
+            order_by = "(vcg_submission_score IS NULL) ASC, vcg_submission_score ASC, path ASC"
+        else:
+            order_by = f"{safe_sort} {sort_dir}, path ASC"
         cur = await conn.execute(
             f"SELECT {', '.join(select_cols)} FROM {from_clause}{where_str} "
-            f"ORDER BY {safe_sort} {sort_dir} LIMIT ? OFFSET ?",
+            f"ORDER BY {order_by} LIMIT ? OFFSET ?",
             all_params + [per_page, (page - 1) * per_page]
         )
         rows = await cur.fetchall()
@@ -201,11 +205,16 @@ async def _fetch_album_photos(conn, album_row, user_id, page, per_page, sort_col
         if sort_col == 'position':
             safe_sort = 'ap.position'
 
+        if safe_sort == 'vcg_submission_score' and sort_dir == 'ASC':
+            order_by = "(vcg_submission_score IS NULL) ASC, vcg_submission_score ASC, path ASC"
+        else:
+            order_by = f"{safe_sort} {sort_dir}, path ASC"
+
         cur = await conn.execute(
             f"SELECT {', '.join(select_cols)} FROM album_photos ap "
             f"JOIN {from_clause} ON photos.path = ap.photo_path "
             f"WHERE {where_str} "
-            f"ORDER BY {safe_sort} {sort_dir} LIMIT ? OFFSET ?",
+            f"ORDER BY {order_by} LIMIT ? OFFSET ?",
             from_params + base_params + [per_page, (page - 1) * per_page]
         )
         rows = await cur.fetchall()
@@ -375,8 +384,12 @@ def _compute_smart_album_cover(conn, album_row, user_id=None):
             from api.top_picks import get_top_picks_score_sql
             sort_col = f"({get_top_picks_score_sql()})"
         sort_dir = 'ASC' if saved_filters.get('sort_direction') == 'ASC' else 'DESC'
+        if sort_col == 'vcg_submission_score' and sort_dir == 'ASC':
+            order_by = "(vcg_submission_score IS NULL) ASC, vcg_submission_score ASC, path ASC"
+        else:
+            order_by = f"{sort_col} {sort_dir}, path ASC"
         row = conn.execute(
-            f"SELECT path FROM {from_clause}{where_str} ORDER BY {sort_col} {sort_dir}, path ASC LIMIT 1",
+            f"SELECT path FROM {from_clause}{where_str} ORDER BY {order_by} LIMIT 1",
             all_params
         ).fetchone()
         return row['path'] if row else None

@@ -29,6 +29,13 @@ from db.scoring_overrides import get_photo_scoring_overrides
 from db.vec import sync_vec_batch
 from processing.progress import emit_progress
 from utils.histogram import unpack_histogram
+from analyzers.vcg_suitability import (
+    VCG_SCORE_VERSION,
+    build_vcg_axis,
+    calculate_vcg_submission_score,
+    score_vcg_suitability,
+    vcg_scored_at,
+)
 
 
 @functools.lru_cache(maxsize=8)
@@ -736,6 +743,8 @@ class Facet:
         self.db_path = db_path
         self.lightweight = lightweight
         self._face_analyzer = None
+        self._vcg_axis = None
+        self._vcg_axis_attempted = False
 
         # Load scoring configuration
         self.config = ScoringConfig(config_path)
@@ -890,6 +899,48 @@ class Facet:
             self.samp_scorer = None
 
         init_database(self.db_path)
+
+    def _get_vcg_axis(self):
+        """Encode the VCG prompt axis once with the active CLIP/SigLIP model."""
+        if getattr(self, '_vcg_axis_attempted', False):
+            return getattr(self, '_vcg_axis', None)
+        self._vcg_axis_attempted = True
+        if getattr(self, 'model', None) is None:
+            return None
+        try:
+            from models.tagger import encode_text_prompts
+
+            def _encode(texts):
+                encoded = encode_text_prompts(
+                    self.model, self._clip_model_name, self._clip_backend,
+                    self.device, texts,
+                )
+                return encoded.detach().float().cpu().numpy()
+
+            self._vcg_axis = build_vcg_axis(_encode)
+        except Exception as exc:  # a scan must still succeed via aggregate fallback
+            logger.warning("VCG prompt encoding unavailable; using aggregate fallback: %s", exc)
+        return self._vcg_axis
+
+    def populate_vcg_scores(self, result):
+        """Attach the VCG suitability, blended score, version and timestamp."""
+        aggregate = result.get('aggregate')
+        suitability = result.get('vcg_suitability_score')
+        if suitability is None:
+            suitability = score_vcg_suitability(
+                result.get('clip_embedding'), self._get_vcg_axis()
+            )
+        # No valid semantic vector: make the dedicated signal neutral relative
+        # to the formula, so the final score is exactly the aggregate.
+        if suitability is None:
+            suitability = aggregate
+        result['vcg_suitability_score'] = suitability
+        result['vcg_submission_score'] = calculate_vcg_submission_score(
+            aggregate, suitability
+        )
+        result['vcg_score_version'] = VCG_SCORE_VERSION
+        result['vcg_scored_at'] = vcg_scored_at()
+        return result
 
     def _load_aesthetic_head(self):
         """Loads the MLP weights that sit on top of CLIP to predict 'Aesthetic' scores.
@@ -1459,6 +1510,8 @@ class Facet:
 
             res.update(exif_data)
 
+            self.populate_vcg_scores(res)
+
             return res
         except Exception as e:
             logger.error("Error scoring %s: %s", original_path, e)
@@ -1517,6 +1570,7 @@ class Facet:
                 'qrealign_score', 'aesthetic_v25', 'deqa_score',
                 'subject_sharpness', 'subject_prominence', 'subject_placement', 'bg_separation',
                 'form_symmetry', 'form_balance', 'form_edge_entropy', 'form_fractal', 'color_harmony',
+                'vcg_suitability_score',
             ]
             if use_embeddings:
                 recalc_cols.append('clip_embedding')
@@ -1635,9 +1689,17 @@ class Facet:
                 categories_updated += 1
 
                 new_exposure = round(row_dict.get('exposure_score', 5.0), 4)
+                vcg_suitability = row_dict.get('vcg_suitability_score')
+                if vcg_suitability is None:
+                    vcg_suitability = new_score
+                vcg_submission = calculate_vcg_submission_score(
+                    new_score, vcg_suitability
+                )
                 updates.append(
                     (round(new_score, 2), self.config.version_hash, category,
-                     new_is_group, new_exposure, row_dict['path'])
+                     new_is_group, new_exposure, vcg_suitability,
+                     vcg_submission, VCG_SCORE_VERSION, vcg_scored_at(),
+                     row_dict['path'])
                 )
 
                 processed = i + 1
@@ -1650,7 +1712,10 @@ class Facet:
             # problem) and the whole rescore commits in one transaction.
             try:
                 conn.executemany(
-                    "UPDATE photos SET aggregate = ?, config_version = ?, category = ?, is_group_portrait = ?, exposure_score = ? WHERE path = ?",
+                    "UPDATE photos SET aggregate = ?, config_version = ?, category = ?, "
+                    "is_group_portrait = ?, exposure_score = ?, "
+                    "vcg_suitability_score = ?, vcg_submission_score = ?, "
+                    "vcg_score_version = ?, vcg_scored_at = ? WHERE path = ?",
                     updates,
                 )
             except sqlite3.DatabaseError as e:
@@ -2349,6 +2414,7 @@ class Facet:
 
         # Phase 1: Pre-generate thumbnails (CPU work, no DB lock held)
         for res, pil_img in results_with_images:
+            self.populate_vcg_scores(res)
             res['thumbnail'] = generate_photo_thumbnail(
                 thumbnail_source(res['path'], pil_img))
 
@@ -2396,6 +2462,7 @@ class Facet:
                         qrealign_score, aesthetic_v25, deqa_score,
                         subject_sharpness, subject_prominence, subject_placement, bg_separation, subject_bbox,
                         form_symmetry, form_balance, form_edge_entropy, form_fractal, color_harmony,
+                        vcg_suitability_score, vcg_submission_score, vcg_score_version, vcg_scored_at,
                         gps_latitude, gps_longitude, scanned_at, render_version
                     )
                     VALUES (
@@ -2417,6 +2484,7 @@ class Facet:
                         :qrealign_score, :aesthetic_v25, :deqa_score,
                         :subject_sharpness, :subject_prominence, :subject_placement, :bg_separation, :subject_bbox,
                         :form_symmetry, :form_balance, :form_edge_entropy, :form_fractal, :color_harmony,
+                        :vcg_suitability_score, :vcg_submission_score, :vcg_score_version, :vcg_scored_at,
                         :gps_latitude, :gps_longitude, datetime('now'), {DISPLAY_RENDER_VERSION}
                     )
                 '''), res)

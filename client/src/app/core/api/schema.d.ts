@@ -6072,6 +6072,10 @@ export interface components {
             topiq_score?: number | null;
             /** Unassigned Faces */
             unassigned_faces?: number | null;
+            /** Vcg Submission Score */
+            vcg_submission_score?: number | null;
+            /** Vcg Suitability Score */
+            vcg_suitability_score?: number | null;
         };
         /**
          * PhotoCountResponse
