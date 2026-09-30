@@ -1715,6 +1715,7 @@
     "error_fallback": "Falha ao carregar a crítica",
     "metrics": {
       "aesthetic": "Qualidade estética",
+      "quality_score": "Qualidade geral da imagem",
       "tech_sharpness": "Nitidez técnica",
       "face_quality": "Qualidade do rosto",
       "eye_sharpness": "Nitidez dos olhos",
@@ -1745,6 +1746,7 @@
     },
     "suggestion": {
       "aesthetic": "Considere um impacto visual mais forte com melhor iluminação ou escolha de tema",
+      "quality_score": "Examine a imagem a 100% e corrija primeiro o desfoque, ruído ou artefato de compressão mais visível",
       "tech_sharpness": "Use uma velocidade de obturador mais rápida ou um tripé para melhorar a nitidez",
       "face_quality": "Garanta que o rosto esteja bem iluminado e em foco",
       "eye_sharpness": "Foque com precisão nos olhos em retratos",
@@ -1756,8 +1758,12 @@
       "noise_sigma": "Use um ISO mais baixo ou aplique redução de ruído",
       "dynamic_range_stops": "Faça bracketing de exposições ou use filtros graduados para melhorar a faixa dinâmica",
       "leading_lines_score": "Procure linhas naturais que conduzam o olhar para dentro do enquadramento",
+      "power_point_score": "Recorte ou reenquadre para aproximar o tema principal de uma interseção da regra dos terços",
+      "aesthetic_iaa": "Simplifique os elementos concorrentes e reforce o tema com luz e cor mais intencionais",
+      "face_quality_iqa": "Corrija localmente a exposição e o ruído do rosto e depois realce os olhos sem aguçar demais a pele",
       "subject_sharpness": "Garanta que o tema principal seja o elemento mais nítido do enquadramento",
       "subject_prominence": "Dê mais espaço ao tema no enquadramento ou use uma profundidade de campo menor",
+      "subject_placement": "Recorte ou reenquadre para mover o tema para um ponto visual claro, como uma interseção dos terços",
       "bg_separation": "Use uma abertura maior ou mais distância para separar o tema do fundo",
       "liqe_score": "Melhore a qualidade geral da imagem — verifique distorções ou artefatos",
       "isolation_bonus": "Use uma abertura maior para isolar melhor o tema do fundo",

@@ -38,6 +38,7 @@ _NOISE_PENALTY_THRESHOLD = 4.0
 # Metric labels for human-readable output
 METRIC_LABELS = {
     'aesthetic': 'Aesthetic Quality',
+    'quality_score': 'Overall Image Quality',
     'tech_sharpness': 'Technical Sharpness',
     'face_quality': 'Face Quality',
     'eye_sharpness': 'Eye Sharpness',
@@ -99,9 +100,10 @@ WEIGHT_TO_COLUMN = {
     'color_harmony': 'color_harmony',
 }
 
-# Suggestions keyed by metric name (low score triggers these)
+# Action templates keyed by metric name (used to build ranked suggestions)
 SUGGESTIONS = {
     'aesthetic': 'Consider stronger visual impact through better lighting or subject matter',
+    'quality_score': 'Inspect the image at 100% and correct the most visible blur, noise, or compression artifact first',
     'tech_sharpness': 'Use a faster shutter speed or tripod to improve sharpness',
     'face_quality': 'Ensure the face is well-lit and in focus',
     'eye_sharpness': 'Focus precisely on the eyes for portraits',
@@ -113,8 +115,12 @@ SUGGESTIONS = {
     'noise_sigma': 'Use a lower ISO or apply noise reduction',
     'dynamic_range_stops': 'Bracket exposures or use graduated filters for better dynamic range',
     'leading_lines_score': 'Look for natural lines that draw the eye into the frame',
+    'power_point_score': 'Crop or reframe so the main subject sits closer to a rule-of-thirds intersection',
+    'aesthetic_iaa': 'Simplify competing elements and strengthen the subject with more deliberate light and color',
+    'face_quality_iqa': 'Correct face exposure and noise locally, then sharpen the eyes without oversharpening skin',
     'subject_sharpness': 'Ensure your main subject is the sharpest element in the frame',
     'subject_prominence': 'Give the subject more frame space or use a shallower depth of field',
+    'subject_placement': 'Crop or reframe to move the subject toward a clear visual anchor such as a thirds intersection',
     'bg_separation': 'Use wider aperture or greater distance to separate subject from background',
     'liqe_score': 'Improve overall image quality — check for distortions or artifacts',
     'isolation_bonus': 'Use wider aperture to better isolate the subject from background',
@@ -124,6 +130,8 @@ SUGGESTIONS = {
     'form_fractal': 'Include richer detail or texture — the frame reads as visually sparse',
     'color_harmony': 'Adjust the palette toward a harmonic hue scheme such as complementary or analogous colors',
 }
+
+_NON_ACTIONABLE_METRICS = {'mean_saturation', 'mean_luminance'}
 
 
 def _build_category_trail(photo, matched_category, sc):
@@ -254,6 +262,47 @@ def _calculate_breakdown(photo, sc, category):
     return breakdown
 
 
+def _suggestion_priority(item):
+    """Estimate how much improving one metric can affect this photo's score.
+
+    Suggestions explain this photo's weighted score, so a moderate score with a
+    large weight can matter more than a very low diagnostic with a tiny weight.
+    Noise is inverted (lower is better); all other critique metrics are scored
+    on the usual 0-10 scale.
+    """
+    value = item['value']
+    if item['metric_key'] == 'noise_sigma':
+        improvement_room = max(0.0, value - _NOISE_CLEAN_THRESHOLD)
+    else:
+        improvement_room = max(0.0, 10.0 - value)
+    return improvement_room * item['weight']
+
+
+def _build_suggestions(breakdown, limit=3):
+    """Return concrete suggestion keys for the highest-impact opportunities.
+
+    Unlike weakness badges, suggestions are not hidden behind the old ``>5%``
+    weight gate. That gate left photos with visibly weak, low-weight metrics
+    without any next action. Every scored photo now receives up to ``limit``
+    suggestions as long as it has an actionable weighted metric.
+    """
+    candidates = [
+        item for item in breakdown
+        if item['metric_key'] in SUGGESTIONS
+        and item['metric_key'] not in _NON_ACTIONABLE_METRICS
+        and _suggestion_priority(item) > 0
+    ]
+    candidates.sort(
+        key=lambda item: (
+            _suggestion_priority(item),
+            item['weight'],
+            -item['value'] if item['metric_key'] != 'noise_sigma' else item['value'],
+        ),
+        reverse=True,
+    )
+    return [item['metric_key'] for item in candidates[:limit]]
+
+
 def _identify_strengths_weaknesses(breakdown):
     """Identify strengths and weaknesses from a score breakdown.
 
@@ -262,7 +311,6 @@ def _identify_strengths_weaknesses(breakdown):
     """
     strengths = []
     weaknesses = []
-    suggestions = []
 
     for item in breakdown:
         val = item['value']
@@ -274,19 +322,15 @@ def _identify_strengths_weaknesses(breakdown):
                 strengths.append({'metric_key': metric_key, 'value': round(val, 1)})
             elif val > _NOISE_HIGH_THRESHOLD:
                 weaknesses.append({'metric_key': metric_key, 'value': round(val, 1)})
-                if metric_key in SUGGESTIONS:
-                    suggestions.append(metric_key)
-        elif metric_key in ('mean_saturation', 'mean_luminance'):
+        elif metric_key in _NON_ACTIONABLE_METRICS:
             continue  # Not meaningful as strengths/weaknesses
         else:
             if val >= _STRENGTH_THRESHOLD:
                 strengths.append({'metric_key': metric_key, 'value': round(val, 1)})
             elif val < _WEAKNESS_THRESHOLD and item['weight'] > 0.05:
                 weaknesses.append({'metric_key': metric_key, 'value': round(val, 1)})
-                if metric_key in SUGGESTIONS:
-                    suggestions.append(metric_key)
 
-    return strengths, weaknesses, suggestions
+    return strengths, weaknesses, _build_suggestions(breakdown)
 
 
 def _check_penalties(photo):
@@ -350,7 +394,7 @@ def _build_rule_critique(photo):
         'breakdown': breakdown,
         'strengths': sorted(strengths, key=lambda x: x['value'], reverse=True)[:5],
         'weaknesses': sorted(weaknesses, key=lambda x: x['value'])[:5],
-        'suggestions': suggestions[:3],
+        'suggestions': suggestions,
         'penalties': penalties,
         'distortions': _parse_distortions(photo.get('distortion_attributes')),
     }
@@ -382,7 +426,7 @@ async def api_critique(
 
         # Select only columns needed for critique (avoid loading BLOB fields)
         critique_cols = [
-            'path', 'category', 'aggregate', 'aesthetic', 'tech_sharpness',
+            'path', 'category', 'aggregate', 'aesthetic', 'quality_score', 'tech_sharpness',
             'face_quality', 'eye_sharpness', 'face_sharpness', 'comp_score',
             'exposure_score', 'color_score', 'contrast_score', 'isolation_bonus',
             'noise_sigma', 'dynamic_range_stops', 'leading_lines_score',

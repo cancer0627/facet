@@ -1715,6 +1715,7 @@
     "error_fallback": "No se pudo cargar la critica",
     "metrics": {
       "aesthetic": "Calidad estetica",
+      "quality_score": "Calidad general de imagen",
       "tech_sharpness": "Nitidez tecnica",
       "face_quality": "Calidad facial",
       "eye_sharpness": "Nitidez de ojos",
@@ -1745,6 +1746,7 @@
     },
     "suggestion": {
       "aesthetic": "Busca un mayor impacto visual con mejor iluminacion o eleccion de sujeto",
+      "quality_score": "Revisa la imagen al 100 % y corrige primero el desenfoque, ruido o artefacto de compresion mas visible",
       "tech_sharpness": "Usa una velocidad de obturacion mas rapida o un tripode para mejorar la nitidez",
       "face_quality": "Asegurate de que el rostro este bien iluminado y enfocado",
       "eye_sharpness": "Enfoca con precision en los ojos para retratos",
@@ -1756,8 +1758,12 @@
       "noise_sigma": "Usa un ISO mas bajo o aplica reduccion de ruido",
       "dynamic_range_stops": "Usa bracketing u filtros graduados para un mejor rango dinamico",
       "leading_lines_score": "Busca lineas naturales que guien la mirada hacia el interior del encuadre",
+      "power_point_score": "Recorta o reencuadra para acercar el sujeto principal a una interseccion de la regla de los tercios",
+      "aesthetic_iaa": "Simplifica los elementos que compiten y refuerza el sujeto con una luz y un color mas intencionados",
+      "face_quality_iqa": "Corrige localmente la exposicion y el ruido del rostro y enfoca los ojos sin sobreenfocar la piel",
       "subject_sharpness": "Asegurate de que tu sujeto principal sea el elemento mas nitido de la imagen",
       "subject_prominence": "Dale mas espacio al sujeto o usa una profundidad de campo menor",
+      "subject_placement": "Recorta o reencuadra para mover el sujeto a un punto visual claro, como una interseccion de tercios",
       "bg_separation": "Usa una apertura mayor o mas distancia para separar el sujeto del fondo",
       "liqe_score": "Mejora la calidad general de la imagen — verifica distorsiones o artefactos",
       "isolation_bonus": "Usa una apertura mayor para aislar mejor el sujeto del fondo",

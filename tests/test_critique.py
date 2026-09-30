@@ -20,7 +20,7 @@ from api.auth import CurrentUser, get_optional_user
 
 # Columns selected by the critique endpoint (must all exist in the test DB).
 _CRITIQUE_COLS = [
-    'path', 'category', 'aggregate', 'aesthetic', 'tech_sharpness',
+    'path', 'category', 'aggregate', 'aesthetic', 'quality_score', 'tech_sharpness',
     'face_quality', 'eye_sharpness', 'face_sharpness', 'comp_score',
     'exposure_score', 'color_score', 'contrast_score', 'isolation_bonus',
     'noise_sigma', 'dynamic_range_stops', 'leading_lines_score',
@@ -83,6 +83,7 @@ def _make_photo(**overrides):
         "category": "landscape",
         "aggregate": 7.5,
         "aesthetic": 8.0,
+        "quality_score": None,
         "tech_sharpness": 7.0,
         "face_quality": None,
         "eye_sharpness": None,
@@ -601,6 +602,51 @@ class TestBuildRuleCritique:
         assert "aesthetic" in strength_keys
         assert "comp_score" in strength_keys
         assert "tech_sharpness" in weakness_keys
+
+    def test_suggestions_exist_without_old_weakness_threshold(self):
+        """A scored photo still gets next actions when no metric passes the old
+        value<5 and weight>5% weakness gate."""
+        from api.routers.critique import _build_rule_critique
+
+        weights = {
+            "aesthetic": 0.58,
+            "composition": 0.18,
+            "tech_sharpness": 0.04,
+            "dynamic_range": 0.02,
+        }
+        photo = _make_photo(
+            aesthetic=6.2,
+            comp_score=7.6,
+            tech_sharpness=0.4,
+            dynamic_range_stops=2.0,
+        )
+
+        with mock.patch("config.ScoringConfig", self._mock_scoring_config(weights)):
+            result = _build_rule_critique(photo)
+
+        assert result["weaknesses"] == []
+        assert result["suggestions"] == ["aesthetic", "comp_score", "tech_sharpness"]
+
+    def test_low_weight_metric_can_receive_suggestion(self):
+        """Low-weight metrics are valid advice candidates even though they do
+        not qualify as headline weaknesses."""
+        from api.routers.critique import _build_rule_critique
+
+        weights = {"tech_sharpness": 0.04}
+        photo = _make_photo(tech_sharpness=0.4)
+
+        with mock.patch("config.ScoringConfig", self._mock_scoring_config(weights)):
+            result = _build_rule_critique(photo)
+
+        assert result["weaknesses"] == []
+        assert result["suggestions"] == ["tech_sharpness"]
+
+    def test_all_weighted_score_metrics_have_suggestion_copy(self):
+        """A weighted score must not silently lose its recommendation."""
+        from api.routers.critique import SUGGESTIONS, WEIGHT_TO_COLUMN
+
+        excluded = {"mean_saturation"}
+        assert set(WEIGHT_TO_COLUMN.values()) - excluded <= set(SUGGESTIONS)
 
     def test_no_penalties_for_clean_photo(self):
         """A photo with no issues produces an empty penalties dict."""

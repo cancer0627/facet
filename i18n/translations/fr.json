@@ -1715,6 +1715,7 @@
     "error_fallback": "Impossible de charger la critique",
     "metrics": {
       "aesthetic": "Qualité esthétique",
+      "quality_score": "Qualité globale de l'image",
       "tech_sharpness": "Netteté technique",
       "face_quality": "Qualité du visage",
       "eye_sharpness": "Netteté des yeux",
@@ -1745,6 +1746,7 @@
     },
     "suggestion": {
       "aesthetic": "Cherchez un impact visuel plus fort avec un meilleur éclairage ou sujet",
+      "quality_score": "Examinez l'image à 100 % et corrigez d'abord le flou, le bruit ou l'artefact de compression le plus visible",
       "tech_sharpness": "Utilisez une vitesse d'obturation plus rapide ou un trépied pour améliorer la netteté",
       "face_quality": "Assurez-vous que le visage est bien éclairé et net",
       "eye_sharpness": "Faites la mise au point précisément sur les yeux pour les portraits",
@@ -1756,8 +1758,12 @@
       "noise_sigma": "Utilisez un ISO plus bas ou appliquez une réduction du bruit",
       "dynamic_range_stops": "Bracketez les expositions ou utilisez des filtres dégradés pour une meilleure plage dynamique",
       "leading_lines_score": "Cherchez des lignes naturelles qui guident le regard dans l'image",
+      "power_point_score": "Recadrez pour rapprocher le sujet principal d'un point d'intersection de la règle des tiers",
+      "aesthetic_iaa": "Simplifiez les éléments concurrents et renforcez le sujet par une lumière et des couleurs plus intentionnelles",
+      "face_quality_iqa": "Corrigez localement l'exposition et le bruit du visage, puis accentuez les yeux sans suraccentuer la peau",
       "subject_sharpness": "Assurez-vous que votre sujet principal est l'élément le plus net de l'image",
       "subject_prominence": "Donnez plus d'espace au sujet ou utilisez une profondeur de champ plus faible",
+      "subject_placement": "Recadrez pour placer le sujet sur un point d'attention clair, comme une intersection des tiers",
       "bg_separation": "Utilisez une ouverture plus grande ou une distance accrue pour séparer le sujet de l'arrière-plan",
       "liqe_score": "Améliorez la qualité globale de l'image — vérifiez les distorsions ou artefacts",
       "isolation_bonus": "Utilisez une ouverture plus grande pour mieux isoler le sujet de l'arrière-plan",

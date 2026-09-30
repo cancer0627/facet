@@ -1715,6 +1715,7 @@
     "error_fallback": "Failed to load critique",
     "metrics": {
       "aesthetic": "Aesthetic Quality",
+      "quality_score": "Overall Image Quality",
       "tech_sharpness": "Technical Sharpness",
       "face_quality": "Face Quality",
       "eye_sharpness": "Eye Sharpness",
@@ -1745,6 +1746,7 @@
     },
     "suggestion": {
       "aesthetic": "Consider stronger visual impact through better lighting or subject matter",
+      "quality_score": "Inspect the image at 100% and correct the most visible blur, noise, or compression artifact first",
       "tech_sharpness": "Use a faster shutter speed or tripod to improve sharpness",
       "face_quality": "Ensure the face is well-lit and in focus",
       "eye_sharpness": "Focus precisely on the eyes for portraits",
@@ -1756,8 +1758,12 @@
       "noise_sigma": "Use a lower ISO or apply noise reduction",
       "dynamic_range_stops": "Bracket exposures or use graduated filters for better dynamic range",
       "leading_lines_score": "Look for natural lines that draw the eye into the frame",
+      "power_point_score": "Crop or reframe so the main subject sits closer to a rule-of-thirds intersection",
+      "aesthetic_iaa": "Simplify competing elements and strengthen the subject with more deliberate light and color",
+      "face_quality_iqa": "Correct face exposure and noise locally, then sharpen the eyes without oversharpening skin",
       "subject_sharpness": "Ensure your main subject is the sharpest element in the frame",
       "subject_prominence": "Give the subject more frame space or use a shallower depth of field",
+      "subject_placement": "Crop or reframe to move the subject toward a clear visual anchor such as a thirds intersection",
       "bg_separation": "Use wider aperture or greater distance to separate subject from background",
       "liqe_score": "Improve overall image quality — check for distortions or artifacts",
       "isolation_bonus": "Use wider aperture to better isolate the subject from background",

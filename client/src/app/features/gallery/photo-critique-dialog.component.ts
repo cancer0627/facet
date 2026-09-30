@@ -308,7 +308,13 @@ export class DistortionLabelPipe implements PipeTransform {
               @for (tip of c.suggestions; track tip) {
                 <li class="flex items-center gap-1.5">
                   <mat-icon class="!text-sm !w-4 !h-4 !leading-4 text-blue-400 shrink-0">lightbulb</mat-icon>
-                  {{ 'critique.suggestion.' + tip | translate }}
+                  <span>
+                    @if (suggestionDetail(c, tip); as detail) {
+                      <span class="font-medium">{{ 'critique.metrics.' + tip | translate }} {{ detail.value | number:'1.1-1' }} · {{ detail.weight | percent:'1.0-0' }}</span>
+                      <span class="opacity-60"> — </span>
+                    }
+                    {{ 'critique.suggestion.' + tip | translate }}
+                  </span>
                 </li>
               }
             </ul>
@@ -399,6 +405,10 @@ export class PhotoCritiqueDialogComponent implements OnInit {
   });
 
   protected readonly vlmRefreshing = signal(false);
+
+  protected suggestionDetail(critique: CritiqueResponse, metricKey: string): CritiqueBreakdown | undefined {
+    return critique.breakdown.find(item => item.metric_key === metricKey);
+  }
 
   async ngOnInit(): Promise<void> {
     try {

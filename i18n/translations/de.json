@@ -1715,6 +1715,7 @@
     "error_fallback": "Kritik konnte nicht geladen werden",
     "metrics": {
       "aesthetic": "Asthetische Qualitat",
+      "quality_score": "Gesamte Bildqualitat",
       "tech_sharpness": "Technische Scharfe",
       "face_quality": "Gesichtsqualitat",
       "eye_sharpness": "Augenscharfe",
@@ -1745,6 +1746,7 @@
     },
     "suggestion": {
       "aesthetic": "Streben Sie eine starkere visuelle Wirkung durch bessere Beleuchtung oder Motivwahl an",
+      "quality_score": "Prufen Sie das Bild bei 100 % und korrigieren Sie zuerst die auffalligste Unscharfe, das Rauschen oder Kompressionsartefakt",
       "tech_sharpness": "Verwenden Sie eine kurzere Verschlusszeit oder ein Stativ fur bessere Scharfe",
       "face_quality": "Stellen Sie sicher, dass das Gesicht gut beleuchtet und scharf ist",
       "eye_sharpness": "Fokussieren Sie prazise auf die Augen bei Portrats",
@@ -1756,8 +1758,12 @@
       "noise_sigma": "Verwenden Sie eine niedrigere ISO oder wenden Sie Rauschreduzierung an",
       "dynamic_range_stops": "Belichtungsreihen oder Verlaufsfilter fur besseren Dynamikumfang verwenden",
       "leading_lines_score": "Suchen Sie nach naturlichen Linien, die den Blick ins Bild fuhren",
+      "power_point_score": "Beschneiden oder gestalten Sie neu, sodass das Hauptmotiv naher an einem Drittel-Schnittpunkt liegt",
+      "aesthetic_iaa": "Reduzieren Sie konkurrierende Elemente und betonen Sie das Motiv mit bewussterem Licht und Farbe",
+      "face_quality_iqa": "Korrigieren Sie Belichtung und Rauschen im Gesicht lokal und scharfen Sie die Augen, ohne die Haut zu uberscharfen",
       "subject_sharpness": "Stellen Sie sicher, dass Ihr Hauptmotiv das scharfste Element im Bild ist",
       "subject_prominence": "Geben Sie dem Motiv mehr Raum oder verwenden Sie eine geringere Scharfentiefe",
+      "subject_placement": "Beschneiden oder gestalten Sie neu, um das Motiv an einem klaren Blickpunkt wie einem Drittel-Schnittpunkt zu platzieren",
       "bg_separation": "Verwenden Sie grossere Blende oder mehr Abstand zur Hintergrundtrennung",
       "liqe_score": "Verbessern Sie die Gesamtbildqualitat — prufen Sie auf Verzerrungen oder Artefakte",
       "isolation_bonus": "Verwenden Sie grossere Blende zur besseren Freistellung des Motivs",
