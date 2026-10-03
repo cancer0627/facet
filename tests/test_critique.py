@@ -6,8 +6,9 @@ get_async_db with a real aiosqlite-backed temp DB rather than a MagicMock
 with a plain stub since it is wrapped in asyncio.to_thread in the handler.
 """
 
+import json
 import sqlite3
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from unittest import mock
 
 import aiosqlite
@@ -36,14 +37,23 @@ _CRITIQUE_COLS = [
     'focal_length', 'f_stop', 'iso',
 ]
 
+_PERSONALIZED_COLS = [
+    *_CRITIQUE_COLS,
+    'vcg_suitability_score', 'vcg_submission_score', 'vcg_score_version',
+    'config_version', 'scanned_at', 'vcg_scored_at',
+]
+
 _CRITIQUE_SCHEMA = (
     "CREATE TABLE photos (path TEXT PRIMARY KEY, "
-    + ", ".join(f"{c} TEXT" for c in _CRITIQUE_COLS if c != 'path')
+    + ", ".join(f"{c} TEXT" for c in _PERSONALIZED_COLS if c != 'path')
     + ", is_rejected INTEGER DEFAULT 0"
-    + ", thumbnail BLOB, vlm_critique TEXT, vlm_critique_translated TEXT);"
+    + ", thumbnail BLOB, vlm_critique TEXT, vlm_critique_language TEXT, vlm_critique_translated TEXT, personalized_suggestions TEXT);"
 )
 
-_VLM_TEST_COLS = set(_CRITIQUE_COLS) | {'thumbnail', 'vlm_critique', 'vlm_critique_translated'}
+_VLM_TEST_COLS = set(_PERSONALIZED_COLS) | {
+    'thumbnail', 'vlm_critique', 'vlm_critique_language', 'vlm_critique_translated',
+    'personalized_suggestions',
+}
 
 
 def _make_db(path, photos):
@@ -82,6 +92,12 @@ def _make_photo(**overrides):
         "path": "/photos/test.jpg",
         "category": "landscape",
         "aggregate": 7.5,
+        "vcg_suitability_score": 6.5,
+        "vcg_submission_score": 7.15,
+        "vcg_score_version": "vcg-stock-v1-65-35",
+        "config_version": "test-config",
+        "scanned_at": "2026-09-28T00:00:00+00:00",
+        "vcg_scored_at": "2026-09-28T00:00:00+00:00",
         "aesthetic": 8.0,
         "quality_score": None,
         "tech_sharpness": 7.0,
@@ -122,6 +138,19 @@ def _make_photo(**overrides):
     return defaults
 
 
+def _personalized_payload(photo, lang='zh', aggregate_action='旧综合建议'):
+    from api.routers.critique import _PERSONALIZED_SUGGESTIONS_VERSION, _personalized_context_hash
+
+    return {
+        'version': _PERSONALIZED_SUGGESTIONS_VERSION,
+        'lang': lang,
+        'context_hash': _personalized_context_hash(photo, lang),
+        'generated_at': '2026-09-28T00:00:00+00:00',
+        'aggregate_suggestions': [{'action': aggregate_action, 'reason': '当前画面问题'}],
+        'vcg_suggestions': [{'action': '旧申请建议', 'reason': '申请场景需要'}],
+    }
+
+
 @pytest.fixture()
 def client():
     app = create_app()
@@ -153,7 +182,8 @@ class TestCritiqueEndpoint:
         _make_db(db, [])  # empty -> path not found
 
         with (
-            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True}}),
+            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
+            mock.patch("api.auth.VIEWER_CONFIG", {"password": "", "edition_password": ""}),
             mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
             mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
         ):
@@ -182,7 +212,8 @@ class TestCritiqueEndpoint:
         }
 
         with (
-            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True}}),
+            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
+            mock.patch("api.auth.VIEWER_CONFIG", {"password": "", "edition_password": ""}),
             mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
             mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
             mock.patch("api.routers.critique._build_rule_critique", return_value=fake_result),
@@ -220,7 +251,8 @@ class TestCritiqueEndpoint:
         }
 
         with (
-            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True}}),
+            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
+            mock.patch("api.auth.VIEWER_CONFIG", {"password": "", "edition_password": ""}),
             mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
             mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
             mock.patch("api.routers.critique.get_existing_columns", return_value=_VLM_TEST_COLS),
@@ -251,7 +283,8 @@ class TestCritiqueEndpoint:
         }
 
         with (
-            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True}}),
+            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
+            mock.patch("api.auth.VIEWER_CONFIG", {"password": "", "edition_password": ""}),
             mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
             mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
             mock.patch("api.routers.critique.get_existing_columns", return_value=_VLM_TEST_COLS),
@@ -284,7 +317,8 @@ class TestCritiqueEndpoint:
         vlm_stub = mock.MagicMock(return_value="Cached critique text.")
 
         with (
-            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True}}),
+            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
+            mock.patch("api.auth.VIEWER_CONFIG", {"password": "", "edition_password": ""}),
             mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
             mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
             mock.patch("api.routers.critique.get_existing_columns", return_value=_VLM_TEST_COLS),
@@ -326,7 +360,8 @@ class TestCritiqueEndpoint:
         vlm_stub = mock.MagicMock(return_value="Fresh text.")
 
         with (
-            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True}}),
+            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
+            mock.patch("api.auth.VIEWER_CONFIG", {"password": "", "edition_password": ""}),
             mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
             mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
             mock.patch("api.routers.critique.get_existing_columns", return_value=_VLM_TEST_COLS),
@@ -341,9 +376,8 @@ class TestCritiqueEndpoint:
         assert resp.json()["vlm_critique"] == "Fresh text."
         assert vlm_stub.call_count == 1
 
-    def test_vlm_translation_persisted_and_returned(self, client, tmp_path):
-        """When lang maps to a translation target, _attach_vlm_critique translates
-        the generated text, persists the translation, and returns it."""
+    def test_vlm_critique_uses_requested_language_and_persists_it(self, client, tmp_path):
+        """The current viewer language reaches generation and the cache records it."""
         db = str(tmp_path / "critique.db")
         _make_db(db, [_make_photo()])
 
@@ -359,14 +393,13 @@ class TestCritiqueEndpoint:
         }
 
         with (
-            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True}}),
+            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
+            mock.patch("api.auth.VIEWER_CONFIG", {"password": "", "edition_password": ""}),
             mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
             mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
             mock.patch("api.routers.critique.get_existing_columns", return_value=_VLM_TEST_COLS),
             mock.patch("api.routers.critique._build_rule_critique", return_value=fake_rule),
-            mock.patch("api.routers.critique._get_vlm_critique", return_value="A lovely landscape."),
-            mock.patch("api.routers.critique.translation_target", return_value="fr"),
-            mock.patch("api.routers.critique.translate_text", return_value="Un beau paysage."),
+            mock.patch("api.routers.critique._get_vlm_critique", return_value="Un beau paysage.") as vlm_stub,
         ):
             resp = client.get(
                 "/api/critique",
@@ -377,14 +410,334 @@ class TestCritiqueEndpoint:
         body = resp.json()
         assert body["vlm_critique"] == "Un beau paysage."
         assert body["vlm_source"] == "generated"
+        assert vlm_stub.call_args.args[-1] == "fr"
 
         conn = sqlite3.connect(db)
         stored = conn.execute(
-            "SELECT vlm_critique, vlm_critique_translated FROM photos WHERE path = '/photos/test.jpg'"
+            "SELECT vlm_critique, vlm_critique_language, vlm_critique_translated "
+            "FROM photos WHERE path = '/photos/test.jpg'"
         ).fetchone()
         conn.close()
-        assert stored[0] == "A lovely landscape."
-        assert stored[1] == "Un beau paysage."
+        assert stored[0] == "Un beau paysage."
+        assert stored[1] == "fr"
+        assert stored[2] is None
+
+    def test_vlm_critique_regenerates_when_cached_language_differs(self, client, tmp_path):
+        """A cached critique in another locale is not returned as the current locale."""
+        db = str(tmp_path / "critique.db")
+        _make_db(db, [_make_photo()])
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE photos SET vlm_critique = ?, vlm_critique_language = ? "
+            "WHERE path = ?",
+            ("English cache.", "en", "/photos/test.jpg"),
+        )
+        conn.commit()
+        conn.close()
+
+        fake_rule = {
+            "category": "landscape",
+            "category_reason": {"reason_key": "default", "category": "landscape", "details": []},
+            "aggregate": 7.5,
+            "breakdown": [],
+            "strengths": [],
+            "weaknesses": [],
+            "suggestions": [],
+            "penalties": {},
+        }
+        vlm_stub = mock.MagicMock(return_value="中文点评缓存替换文本。")
+
+        with (
+            mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
+            mock.patch("api.auth.VIEWER_CONFIG", {"password": "", "edition_password": ""}),
+            mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
+            mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
+            mock.patch("api.routers.critique.get_existing_columns", return_value=_VLM_TEST_COLS),
+            mock.patch("api.routers.critique._build_rule_critique", return_value=fake_rule),
+            mock.patch("api.routers.critique._get_vlm_critique", vlm_stub),
+        ):
+            resp = client.get(
+                "/api/critique",
+                params={"path": "/photos/test.jpg", "mode": "vlm", "lang": "zh"},
+            )
+
+        assert resp.json()["vlm_critique"] == "中文点评缓存替换文本。"
+        assert resp.json()["vlm_source"] == "generated"
+        assert vlm_stub.call_args.args[-1] == "zh"
+
+
+class TestPersonalizedSuggestions:
+    """Structured personalized advice is independently cached and refreshed."""
+
+    _RULE = {
+        "category": "landscape",
+        "category_reason": {"reason_key": "default", "category": "landscape", "details": []},
+        "aggregate": 7.5,
+        "breakdown": [
+            {"metric": "Composition", "metric_key": "comp_score", "value": 6.5,
+             "weight": 0.2, "contribution": 1.3},
+        ],
+        "strengths": [], "weaknesses": [], "suggestions": [], "penalties": {},
+    }
+
+    @contextmanager
+    def _endpoint_patches(self, db, *, edition=True, show_vlm=True, generated=None):
+        generator = mock.MagicMock(return_value=generated)
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch(
+                "api.routers.critique.VIEWER_CONFIG",
+                {"features": {"show_critique": True, "show_vlm_critique": show_vlm}},
+            ))
+            stack.enter_context(mock.patch(
+                "api.routers.critique.get_async_db", _async_conn_factory(db),
+            ))
+            stack.enter_context(mock.patch(
+                "api.routers.critique.get_visibility_clause", _fake_vis,
+            ))
+            stack.enter_context(mock.patch(
+                "api.routers.critique.get_existing_columns", return_value=_VLM_TEST_COLS,
+            ))
+            stack.enter_context(mock.patch(
+                "api.routers.critique.is_edition_authenticated", return_value=edition,
+            ))
+            stack.enter_context(mock.patch(
+                "api.routers.critique.resolve_personalized_vlm_config",
+                return_value={"model_path": "/m"},
+            ))
+            stack.enter_context(mock.patch(
+                "api.routers.critique._build_rule_critique", return_value=dict(self._RULE),
+            ))
+            stack.enter_context(mock.patch(
+                "api.routers.critique._get_personalized_suggestions", generator,
+            ))
+            yield generator
+
+    def test_prompt_contains_scores_formula_and_safety_limits(self):
+        from api.routers.critique import _build_personalized_prompt
+
+        prompt = _build_personalized_prompt(_make_photo(), self._RULE, 'zh').lower()
+
+        assert '7.5/10' in prompt
+        assert '7.15/10' in prompt
+        assert 'visual china' in prompt
+        assert '65% aggregate + 35% suitability' in prompt
+        assert 'return only valid json' in prompt
+        assert 'aggregate_action' in prompt
+        assert 'vcg_action' in prompt
+        assert 'at most 3 items' in prompt
+        assert 'do not predict any numeric score increase' in prompt
+        assert 'do not claim to know official visual china review rules' in prompt
+
+    def test_parser_accepts_plain_and_fenced_json_but_rejects_invalid_output(self):
+        from api.routers.critique import _parse_personalized_suggestions
+
+        plain = '{"aggregate_suggestions":[{"action":"Crop","reason":"Remove edge clutter"}],"vcg_suggestions":[]}'
+        compact = (
+            '{"aggregate_action":"Crop","aggregate_reason":"Remove edge clutter",'
+            '"vcg_action":"Reduce highlights","vcg_reason":"Protect bright areas"}'
+        )
+        fenced = '```json\n' + plain + '\n```'
+
+        assert _parse_personalized_suggestions(plain)['aggregate_suggestions'][0]['action'] == 'Crop'
+        assert _parse_personalized_suggestions(fenced)['vcg_suggestions'] == []
+        parsed_compact = _parse_personalized_suggestions(compact)
+        assert parsed_compact['vcg_suggestions'][0]['action'] == 'Reduce highlights'
+        assert _parse_personalized_suggestions('not json') is None
+        assert _parse_personalized_suggestions('{"aggregate_suggestions":[]}') is None
+
+    def test_valid_cache_hit_skips_vlm(self, client, tmp_path):
+        db = str(tmp_path / "critique.db")
+        photo = _make_photo()
+        _make_db(db, [photo])
+        payload = _personalized_payload(photo)
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE photos SET personalized_suggestions = ? WHERE path = ?",
+            [json.dumps(payload, ensure_ascii=False), photo['path']],
+        )
+        conn.commit()
+        conn.close()
+
+        with self._endpoint_patches(db, edition=False, generated=None) as generator:
+            resp = client.get(
+                "/api/personalized_suggestions",
+                params={"path": photo['path'], "lang": "zh"},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["available"] is True
+        assert body["source"] == "cached"
+        assert body["aggregate_suggestions"][0]["action"] == "旧综合建议"
+        generator.assert_not_called()
+
+    def test_missing_cache_generates_and_persists(self, client, tmp_path):
+        db = str(tmp_path / "critique.db")
+        photo = _make_photo()
+        _make_db(db, [photo])
+        generated = {
+            "aggregate_suggestions": [{"action": "拍摄：改变机位", "reason": "主体边缘杂乱"}],
+            "vcg_suggestions": [{"action": "后期：压低高光", "reason": "高光区域过亮"}],
+        }
+
+        with self._endpoint_patches(db, generated=generated) as generator:
+            resp = client.get(
+                "/api/personalized_suggestions",
+                params={"path": photo['path'], "lang": "zh"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["source"] == "generated"
+        assert resp.json()["aggregate_suggestions"] == generated["aggregate_suggestions"]
+        generator.assert_called_once()
+        conn = sqlite3.connect(db)
+        stored = conn.execute(
+            "SELECT personalized_suggestions FROM photos WHERE path = ?", [photo['path']]
+        ).fetchone()[0]
+        conn.close()
+        assert json.loads(stored)["vcg_suggestions"] == generated["vcg_suggestions"]
+
+    def test_refresh_replaces_valid_cache(self, client, tmp_path):
+        db = str(tmp_path / "critique.db")
+        photo = _make_photo()
+        _make_db(db, [photo])
+        old_payload = _personalized_payload(photo)
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE photos SET personalized_suggestions = ? WHERE path = ?",
+            [json.dumps(old_payload), photo['path']],
+        )
+        conn.commit()
+        conn.close()
+        generated = {
+            "aggregate_suggestions": [{"action": "新综合建议", "reason": "新的综合问题"}],
+            "vcg_suggestions": [{"action": "新申请建议", "reason": "新的申请问题"}],
+        }
+
+        with self._endpoint_patches(db, generated=generated) as generator:
+            resp = client.get(
+                "/api/personalized_suggestions",
+                params={"path": photo['path'], "lang": "zh", "refresh": "true"},
+            )
+
+        assert resp.json()["source"] == "generated"
+        assert resp.json()["aggregate_suggestions"] == generated["aggregate_suggestions"]
+        generator.assert_called_once()
+        conn = sqlite3.connect(db)
+        stored = json.loads(conn.execute(
+            "SELECT personalized_suggestions FROM photos WHERE path = ?", [photo['path']]
+        ).fetchone()[0])
+        conn.close()
+        assert stored["aggregate_suggestions"] == generated["aggregate_suggestions"]
+
+    def test_score_context_change_regenerates_stale_cache(self, client, tmp_path):
+        db = str(tmp_path / "critique.db")
+        photo = _make_photo()
+        _make_db(db, [photo])
+        payload = _personalized_payload(photo)
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE photos SET personalized_suggestions = ?, aggregate = ? WHERE path = ?",
+            [json.dumps(payload), 6.0, photo['path']],
+        )
+        conn.commit()
+        conn.close()
+        generated = {
+            "aggregate_suggestions": [{"action": "重新生成", "reason": "评分上下文已变化"}],
+            "vcg_suggestions": [],
+        }
+
+        with self._endpoint_patches(db, generated=generated) as generator:
+            resp = client.get(
+                "/api/personalized_suggestions",
+                params={"path": photo['path'], "lang": "zh"},
+            )
+
+        assert resp.json()["source"] == "generated"
+        assert resp.json()["aggregate_score"] == 6.0
+        generator.assert_called_once()
+
+    def test_missing_score_is_explicitly_unavailable(self, client, tmp_path):
+        db = str(tmp_path / "critique.db")
+        _make_db(db, [_make_photo(aggregate=None)])
+
+        with self._endpoint_patches(db, generated=None) as generator:
+            resp = client.get(
+                "/api/personalized_suggestions",
+                params={"path": "/photos/test.jpg", "lang": "zh"},
+            )
+
+        assert resp.json() == {
+            "available": False,
+            "source": "unavailable",
+            "aggregate_score": None,
+            "vcg_submission_score": 7.15,
+            "aggregate_suggestions": [],
+            "vcg_suggestions": [],
+            "generated_at": None,
+            "reason": "score_unavailable",
+            "warning": None,
+        }
+        generator.assert_not_called()
+
+    def test_no_edition_access_is_explicitly_unavailable(self, client, tmp_path):
+        db = str(tmp_path / "critique.db")
+        _make_db(db, [_make_photo()])
+
+        with self._endpoint_patches(db, edition=False, generated=None) as generator:
+            resp = client.get(
+                "/api/personalized_suggestions",
+                params={"path": "/photos/test.jpg", "lang": "zh"},
+            )
+
+        assert resp.json()["reason"] == "edition_required"
+        assert resp.json()["available"] is False
+        generator.assert_not_called()
+
+    def test_no_vlm_is_explicitly_unavailable(self, client, tmp_path):
+        db = str(tmp_path / "critique.db")
+        _make_db(db, [_make_photo()])
+
+        with self._endpoint_patches(db, show_vlm=False, generated=None) as generator:
+            resp = client.get(
+                "/api/personalized_suggestions",
+                params={"path": "/photos/test.jpg", "lang": "zh"},
+            )
+
+        assert resp.json()["reason"] == "vlm_unavailable"
+        assert resp.json()["available"] is False
+        generator.assert_not_called()
+
+    def test_refresh_failure_keeps_existing_cache(self, client, tmp_path):
+        db = str(tmp_path / "critique.db")
+        photo = _make_photo()
+        _make_db(db, [photo])
+        payload = _personalized_payload(photo)
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "UPDATE photos SET personalized_suggestions = ? WHERE path = ?",
+            [json.dumps(payload), photo['path']],
+        )
+        conn.commit()
+        conn.close()
+
+        with self._endpoint_patches(db, generated=None) as generator:
+            resp = client.get(
+                "/api/personalized_suggestions",
+                params={"path": photo['path'], "lang": "zh", "refresh": "true"},
+            )
+
+        body = resp.json()
+        assert body["source"] == "cached"
+        assert body["warning"] == "refresh_failed"
+        assert body["aggregate_suggestions"][0]["action"] == "旧综合建议"
+        generator.assert_called_once()
+        conn = sqlite3.connect(db)
+        stored = json.loads(conn.execute(
+            "SELECT personalized_suggestions FROM photos WHERE path = ?", [photo['path']]
+        ).fetchone()[0])
+        conn.close()
+        assert stored["aggregate_suggestions"][0]["action"] == "旧综合建议"
 
 
 def _client_for(user):
@@ -411,7 +764,7 @@ class TestCritiqueVlmEditionGate:
         client, app = _client_for(CurrentUser(user_id="u1", role="user"))
         try:
             with (
-                mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True}}),
+                mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
                 mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
                 mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
                 mock.patch("api.routers.critique.get_existing_columns", return_value=_VLM_TEST_COLS),
@@ -445,7 +798,7 @@ class TestCritiqueVlmEditionGate:
         client, app = _client_for(CurrentUser(user_id="u1", role="user"))
         try:
             with (
-                mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True}}),
+                mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
                 mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
                 mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
                 mock.patch("api.routers.critique.get_existing_columns", return_value=_VLM_TEST_COLS),
@@ -468,7 +821,7 @@ class TestCritiqueVlmEditionGate:
         )
         try:
             with (
-                mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True}}),
+                mock.patch("api.routers.critique.VIEWER_CONFIG", {"features": {"show_critique": True, "show_vlm_critique": True}}),
                 mock.patch("api.routers.critique.get_async_db", _async_conn_factory(db)),
                 mock.patch("api.routers.critique.get_visibility_clause", _fake_vis),
                 mock.patch("api.routers.critique.get_existing_columns", return_value=_VLM_TEST_COLS),
@@ -820,6 +1173,9 @@ class TestBuildVlmPrompt:
         assert "Penalties applied: blink." in prompt
         assert "f/2.8, 1/250s, ISO 400, 85mm" in prompt
 
+        zh_prompt = _build_vlm_prompt(rule, photo, "zh")
+        assert "Respond entirely in Simplified Chinese (zh)" in zh_prompt
+
     def test_prompt_handles_missing_data(self):
         from api.routers.critique import _build_vlm_prompt
 
@@ -858,6 +1214,7 @@ class TestBuildVlmPrompt:
 
         assert "confirm or contradict" in prompt
         assert "never restate the numbers" in prompt
+        assert "respond entirely in english (en)" in prompt
 
         assert "composition: 5.0" in prompt
 

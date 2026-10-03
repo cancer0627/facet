@@ -21,7 +21,7 @@ are declared ``Any`` here rather than guessed into a ``Union`` that risks
 silently coercing one branch (e.g. ``True`` -> ``1.0``).
 """
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -112,6 +112,23 @@ class MediaCritiqueResponse(BaseModel):
     vlm_critique: Optional[str] = None
     vlm_source: Optional[str] = None
     vlm_available: Optional[bool] = None
+
+
+class MediaPersonalizedSuggestion(BaseModel):
+    action: str
+    reason: str
+
+
+class MediaPersonalizedSuggestionsResponse(BaseModel):
+    available: bool
+    source: Literal['cached', 'generated', 'unavailable']
+    aggregate_score: Optional[float] = None
+    vcg_submission_score: Optional[float] = None
+    aggregate_suggestions: list[MediaPersonalizedSuggestion] = []
+    vcg_suggestions: list[MediaPersonalizedSuggestion] = []
+    generated_at: Optional[str] = None
+    reason: Optional[str] = None
+    warning: Optional[str] = None
 
 
 class MediaFaceMarker(BaseModel):

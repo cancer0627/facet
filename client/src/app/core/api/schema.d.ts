@@ -2099,6 +2099,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/personalized_suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Api Personalized Suggestions
+         * @description Get score-context-aware personalized suggestions for one photo.
+         *
+         *     Cached suggestions can be read without edition authentication. Generating or
+         *     refreshing them is intentionally separate from the existing full VLM critique.
+         */
+        get: operations["api_personalized_suggestions_api_personalized_suggestions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/persons": {
         parameters: {
             query?: never;
@@ -5604,6 +5627,43 @@ export interface components {
         MediaLocationNameResponse: {
             /** Display Name */
             display_name: string;
+        };
+        /** MediaPersonalizedSuggestion */
+        MediaPersonalizedSuggestion: {
+            /** Action */
+            action: string;
+            /** Reason */
+            reason: string;
+        };
+        /** MediaPersonalizedSuggestionsResponse */
+        MediaPersonalizedSuggestionsResponse: {
+            /** Aggregate Score */
+            aggregate_score?: number | null;
+            /**
+             * Aggregate Suggestions
+             * @default []
+             */
+            aggregate_suggestions?: components["schemas"]["MediaPersonalizedSuggestion"][];
+            /** Available */
+            available: boolean;
+            /** Generated At */
+            generated_at?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "cached" | "generated" | "unavailable";
+            /** Vcg Submission Score */
+            vcg_submission_score?: number | null;
+            /**
+             * Vcg Suggestions
+             * @default []
+             */
+            vcg_suggestions?: components["schemas"]["MediaPersonalizedSuggestion"][];
+            /** Warning */
+            warning?: string | null;
         };
         /** MediaSocialCropPreviewResponse */
         MediaSocialCropPreviewResponse: {
@@ -10320,6 +10380,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PersonFacesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_personalized_suggestions_api_personalized_suggestions_get: {
+        parameters: {
+            query: {
+                path: string;
+                lang?: string | null;
+                refresh?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaPersonalizedSuggestionsResponse"];
                 };
             };
             /** @description Validation Error */

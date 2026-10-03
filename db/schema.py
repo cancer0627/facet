@@ -162,7 +162,10 @@ PHOTOS_COLUMNS = [
 
     # VLM critique cache (regenerated on demand via /api/critique?refresh=true)
     ('vlm_critique', 'TEXT'),
+    ('vlm_critique_language', 'TEXT'),
     ('vlm_critique_translated', 'TEXT'),
+    # Structured, score-context-aware personalized suggestions cache
+    ('personalized_suggestions', 'TEXT'),
 
     # OCR text-in-image (opt-in --detect-text; NULL = not evaluated, '' = evaluated
     # and no text found, else the detected text). The '' sentinel is what lets

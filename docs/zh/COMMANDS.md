@@ -134,6 +134,7 @@ API 会将其呈现在 `/api/scan/status` 的 `progress` 字段以及 SSE 数据
 | `python facet.py --detect-panoramas` | 通过在几何上匹配已存储的缩略图来检测全景照片组（整个照片库，CPU，不解码图像）。与 `--detect-sequences` 一样会先运行包围曝光识别：HDR 全景在每个位置都做了包围曝光，因此两者必须保持同步。对全景／HDR 全景选片粒度和 `hide_panoramas` 开关而言，前提条件与 `--detect-sequences` 相同 |
 | `python facet.py --detect-duplicates` | 通过 pHash 检测重复照片 |
 | `python facet.py --sweep-dedup-thresholds [labels.json]` | 评估近似重复的余弦阈值（有标注时给出精确率／召回率表格，否则给出候选余弦分布） |
+| `python facet.py --generate-critiques LANG` | 使用选定语言（`en`、`fr`、`de`、`it`、`es`、`pt` 或 `zh`），为全部已评分照片补齐 VLM（视觉语言模型）AI（人工智能）点评与个性化建议。综合评分和视觉中国申请评分都严格低于 5 的照片会直接跳过，不加载 VLM。两类有效缓存会分别跳过；每项成功后立即保存，中断后再次运行同一命令即可继续。要求配置的 VLM 后端已经可用 |
 | `python facet.py --generate-captions` | `[GPU]` `[16gb/24gb]` 使用 VLM 为照片生成 AI 照片描述。当 `narrative_moments.caption_min_confidence > 0` 时，会跳过未标注／标为 `other` ／低于阈值的照片（按需生成描述的接口同样适用该门槛） |
 | `python facet.py --translate-captions` | 把英文照片描述翻译成所配置的目标语言（CPU，MarianMT） |
 | `python facet.py --extract-gps` | 从 EXIF 数据中提取 GPS 坐标写入数据库列 |

@@ -5,7 +5,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, timeout } from 'rxjs';
 import { ApiService } from '../../core/services/api.service';
 import { AuthService } from '../../core/services/auth.service';
 import { I18nService } from '../../core/services/i18n.service';
@@ -78,6 +78,27 @@ interface CritiqueResponse {
   vlm_available?: boolean;
   caption?: string;
 }
+
+interface PersonalizedSuggestion {
+  action: string;
+  reason: string;
+}
+
+interface PersonalizedSuggestionsResponse {
+  available: boolean;
+  source: 'cached' | 'generated' | 'unavailable';
+  aggregate_score: number | null;
+  vcg_submission_score: number | null;
+  aggregate_suggestions: PersonalizedSuggestion[];
+  vcg_suggestions: PersonalizedSuggestion[];
+  generated_at: string | null;
+  reason: string | null;
+  warning: string | null;
+}
+
+// The CPU VLM（视觉语言模型）can take about a minute for one image, but a
+// stuck backend must not leave the dialog in an endless loading state.
+const PERSONALIZED_REQUEST_TIMEOUT_MS = 120_000;
 
 @Pipe({ name: 'contributionColor', standalone: true })
 export class ContributionColorPipe implements PipeTransform {
@@ -321,6 +342,83 @@ export class DistortionLabelPipe implements PipeTransform {
           </div>
         }
 
+        <!-- Penalties -->
+        @if (hasPenalties()) {
+          <div class="mt-3 text-xs opacity-60">
+            <span class="uppercase tracking-wider">{{ I18N.critique.penalties | translate }}:</span>
+            @if (c.penalties['blink']) { <span class="ml-2 text-red-400">{{ I18N.critique.penalty.blink | translate }}</span> }
+            @if (c.penalties['noise']) { <span class="ml-2">{{ I18N.critique.penalty.noise | translate:{ value: '' + c.penalties['noise'] } }}</span> }
+            @if (c.penalties['highlight_clipping']) { <span class="ml-2">{{ I18N.critique.penalty.highlight_clipping | translate:{ value: '' + c.penalties['highlight_clipping'] } }}</span> }
+            @if (c.penalties['shadow_clipping']) { <span class="ml-2">{{ I18N.critique.penalty.shadow_clipping | translate:{ value: '' + c.penalties['shadow_clipping'] } }}</span> }
+            @if (skinTone(); as st) { <span class="ml-2 text-amber-400">{{ I18N.critique.penalty.skin_tone | translate:{ cast: ('critique.skin_cast.' + st.cast | translate), delta: '' + st.delta } }}</span> }
+          </div>
+        }
+
+        <!-- Personalized Suggestions -->
+        <div class="mt-4 mb-3 p-3 rounded-lg bg-[var(--mat-sys-surface-container)]">
+          <div class="flex items-center mb-2">
+            <div class="flex-1 text-xs uppercase tracking-wider opacity-50">{{ I18N.critique.personalized_title | translate }}</div>
+            <button mat-icon-button class="!w-6 !h-6 !p-0 opacity-60 hover:opacity-90"
+                    [disabled]="personalizedLoading() || personalizedRefreshing()"
+                    [attr.aria-label]="I18N.critique.personalized_refresh | translate"
+                    [title]="I18N.critique.personalized_refresh | translate"
+                    (click)="refreshPersonalized()">
+              @if (personalizedLoading() || personalizedRefreshing()) {
+                <mat-spinner diameter="16" [attr.aria-label]="I18N.ui.labels.loading | translate" />
+              } @else {
+                <mat-icon class="!text-base !w-4 !h-4 !leading-4">refresh</mat-icon>
+              }
+            </button>
+          </div>
+
+          @if (personalizedLoading()) {
+            <div class="flex items-center gap-2 text-sm opacity-70">
+              <mat-spinner diameter="18" [attr.aria-label]="I18N.ui.labels.loading | translate" />
+              <span>{{ I18N.critique.personalized_loading | translate }}</span>
+            </div>
+          } @else if (personalizedError(); as personalizedError) {
+            <p class="text-sm text-amber-400">{{ personalizedError }}</p>
+          } @else if (personalizedSuggestions(); as p) {
+            @if (p.warning) {
+              <p class="mb-2 text-xs text-amber-400">{{ personalizedMessageKey(p.warning) | translate }}</p>
+            }
+            @if (p.available) {
+              <div class="flex flex-col gap-3">
+                <div>
+                  <div class="text-xs uppercase tracking-wider text-blue-400 mb-1">
+                    {{ I18N.critique.personalized_aggregate | translate }}
+                    @if (p.aggregate_score !== null) { · {{ p.aggregate_score | number:'1.1-1' }} }
+                  </div>
+                  <ul class="text-sm space-y-1">
+                    @for (tip of p.aggregate_suggestions; track tip.action) {
+                      <li class="flex items-start gap-1.5">
+                        <mat-icon class="!text-sm !w-4 !h-4 !leading-4 text-blue-400 shrink-0 mt-0.5">lightbulb</mat-icon>
+                        <span><span class="font-medium">{{ tip.action }}</span><span class="opacity-60"> — {{ tip.reason }}</span></span>
+                      </li>
+                    }
+                  </ul>
+                </div>
+                <div>
+                  <div class="text-xs uppercase tracking-wider text-purple-400 mb-1">
+                    {{ I18N.critique.personalized_vcg | translate }}
+                    @if (p.vcg_submission_score !== null) { · {{ p.vcg_submission_score | number:'1.2-2' }} }
+                  </div>
+                  <ul class="text-sm space-y-1">
+                    @for (tip of p.vcg_suggestions; track tip.action) {
+                      <li class="flex items-start gap-1.5">
+                        <mat-icon class="!text-sm !w-4 !h-4 !leading-4 text-purple-400 shrink-0 mt-0.5">lightbulb</mat-icon>
+                        <span><span class="font-medium">{{ tip.action }}</span><span class="opacity-60"> — {{ tip.reason }}</span></span>
+                      </li>
+                    }
+                  </ul>
+                </div>
+              </div>
+            } @else {
+              <p class="text-sm text-amber-400">{{ personalizedMessageKey(p.reason) | translate }}</p>
+            }
+          }
+        </div>
+
         <!-- VLM Critique -->
         @if (c.vlm_critique) {
           <div class="mt-4 p-3 rounded-lg bg-[var(--mat-sys-surface-container)]">
@@ -338,18 +436,6 @@ export class DistortionLabelPipe implements PipeTransform {
               }
             </div>
             <p class="text-sm whitespace-pre-line">{{ c.vlm_critique }}</p>
-          </div>
-        }
-
-        <!-- Penalties -->
-        @if (hasPenalties()) {
-          <div class="mt-3 text-xs opacity-60">
-            <span class="uppercase tracking-wider">{{ I18N.critique.penalties | translate }}:</span>
-            @if (c.penalties['blink']) { <span class="ml-2 text-red-400">{{ I18N.critique.penalty.blink | translate }}</span> }
-            @if (c.penalties['noise']) { <span class="ml-2">{{ I18N.critique.penalty.noise | translate:{ value: '' + c.penalties['noise'] } }}</span> }
-            @if (c.penalties['highlight_clipping']) { <span class="ml-2">{{ I18N.critique.penalty.highlight_clipping | translate:{ value: '' + c.penalties['highlight_clipping'] } }}</span> }
-            @if (c.penalties['shadow_clipping']) { <span class="ml-2">{{ I18N.critique.penalty.shadow_clipping | translate:{ value: '' + c.penalties['shadow_clipping'] } }}</span> }
-            @if (skinTone(); as st) { <span class="ml-2 text-amber-400">{{ I18N.critique.penalty.skin_tone | translate:{ cast: ('critique.skin_cast.' + st.cast | translate), delta: '' + st.delta } }}</span> }
           </div>
         }
       }
@@ -405,12 +491,32 @@ export class PhotoCritiqueDialogComponent implements OnInit {
   });
 
   protected readonly vlmRefreshing = signal(false);
+  protected readonly personalizedLoading = signal(true);
+  protected readonly personalizedRefreshing = signal(false);
+  protected readonly personalizedSuggestions = signal<PersonalizedSuggestionsResponse | null>(null);
+  protected readonly personalizedError = signal<string | null>(null);
 
   protected suggestionDetail(critique: CritiqueResponse, metricKey: string): CritiqueBreakdown | undefined {
     return critique.breakdown.find(item => item.metric_key === metricKey);
   }
 
+  protected personalizedMessageKey(code: string | null | undefined): string {
+    switch (code) {
+      case 'edition_required':
+        return I18N.critique.personalized_edition_required;
+      case 'vlm_unavailable':
+        return I18N.critique.personalized_vlm_unavailable;
+      case 'score_unavailable':
+        return I18N.critique.personalized_score_unavailable;
+      case 'refresh_failed':
+        return I18N.critique.personalized_refresh_failed;
+      default:
+        return I18N.critique.personalized_unavailable;
+    }
+  }
+
   async ngOnInit(): Promise<void> {
+    void this.loadPersonalizedSuggestions();
     try {
       const mode = this.data.vlmAvailable ? 'vlm' : 'rule';
       const res = await firstValueFrom(
@@ -425,6 +531,44 @@ export class PhotoCritiqueDialogComponent implements OnInit {
     } finally {
       this.loading.set(false);
     }
+  }
+
+  private async loadPersonalizedSuggestions(refresh = false): Promise<void> {
+    if (refresh) {
+      if (this.personalizedLoading() || this.personalizedRefreshing()) return;
+      this.personalizedRefreshing.set(true);
+    } else {
+      this.personalizedLoading.set(true);
+    }
+
+    try {
+      const res = await firstValueFrom(
+        this.api.get<PersonalizedSuggestionsResponse>('/personalized_suggestions', {
+          path: this.data.photoPath,
+          lang: this.i18n.locale(),
+          refresh: refresh ? 'true' : 'false',
+        }).pipe(timeout(PERSONALIZED_REQUEST_TIMEOUT_MS)),
+      );
+      this.personalizedSuggestions.set(res);
+      this.personalizedError.set(null);
+    } catch {
+      if (this.personalizedSuggestions()) {
+        this.snack.open(
+          this.i18n.t(I18N.critique.personalized_refresh_failed),
+          this.i18n.t(I18N.common.dismiss),
+          { duration: 3000 },
+        );
+      } else {
+        this.personalizedError.set(this.i18n.t(I18N.critique.personalized_unavailable));
+      }
+    } finally {
+      this.personalizedLoading.set(false);
+      this.personalizedRefreshing.set(false);
+    }
+  }
+
+  protected refreshPersonalized(): void {
+    void this.loadPersonalizedSuggestions(true);
   }
 
   protected async refreshVlm(): Promise<void> {

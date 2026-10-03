@@ -117,7 +117,13 @@ class TestOllamaRequest:
 
 class TestOpenAIRequest:
     def test_generate_shapes_request_with_auth(self):
-        backend = vb.OpenAICompatibleBackend("http://host:1234/v1", "sk-secret", "vlm-model", timeout=77)
+        backend = vb.OpenAICompatibleBackend(
+            "http://host:1234/v1",
+            "sk-secret",
+            "vlm-model",
+            timeout=77,
+            chat_template_kwargs={"enable_thinking": False},
+        )
         recorder = {}
         payload = {"choices": [{"message": {"content": " a dog "}}]}
         with mock.patch.object(vb.urllib_request, "urlopen",
@@ -132,6 +138,7 @@ class TestOpenAIRequest:
         body = json.loads(request.data)
         assert body["model"] == "vlm-model"
         assert body["max_tokens"] == 64
+        assert body["chat_template_kwargs"] == {"enable_thinking": False}
         content = body["messages"][0]["content"]
         assert content[0] == {"type": "text", "text": "Caption it."}
         assert content[1]["type"] == "image_url"
@@ -242,6 +249,42 @@ class TestResolveVlmConfigUngate:
         with mock.patch("api.config._FULL_CONFIG", _LEGACY_REMOTE), \
                 mock.patch("api.model_cache._resolved_profile", None):
             assert resolve_vlm_config()
+
+
+class TestResolvePersonalizedVlmConfig:
+    def test_legacy_uses_configured_low_resource_model(self):
+        from api.model_cache import resolve_personalized_vlm_config
+
+        config = {
+            "models": {
+                "vram_profile": "legacy",
+                "profiles": {"legacy": {"tagging_model": "clip"}},
+                "qwen3_5_0_8b": {"model_path": "Qwen/Qwen3.5-0.8B"},
+            },
+            "critique": {"vlm": {"model_key": "qwen3_5_0_8b"}},
+        }
+        with mock.patch("api.config._FULL_CONFIG", config), \
+                mock.patch("api.model_cache._resolved_profile", None):
+            assert resolve_personalized_vlm_config() == {
+                "model_path": "Qwen/Qwen3.5-0.8B"
+            }
+
+    def test_existing_profile_vlm_wins_over_low_resource_fallback(self):
+        from api.model_cache import resolve_personalized_vlm_config
+
+        config = {
+            "models": {
+                "vram_profile": "16gb",
+                "profiles": {"16gb": {"tagging_model": "qwen3.5-2b"}},
+                "qwen3_5_2b": {"model_path": "Qwen/Qwen3.5-2B"},
+                "qwen3_5_0_8b": {"model_path": "Qwen/Qwen3.5-0.8B"},
+            },
+            "critique": {"vlm": {"model_key": "qwen3_5_0_8b"}},
+        }
+        with mock.patch("api.config._FULL_CONFIG", config):
+            assert resolve_personalized_vlm_config() == {
+                "model_path": "Qwen/Qwen3.5-2B"
+            }
 
 
 # --- Qwen2.5-VL batched generation must left-pad for correct decoding ------

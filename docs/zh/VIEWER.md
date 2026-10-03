@@ -439,11 +439,21 @@ API：参见下文的 [API 端点](#api-端点)一节。
 
 使用已配置的 VLM（Qwen3.5-2B 或 Qwen3.5-4B）给出结合上下文的点评。需要 16gb 或 24gb VRAM 配置档，以及 `viewer.features.show_vlm_critique: true`。
 
-提示词是一条可配置的阶梯（`critique.vlm`），会注入完整的规则拆解、扣分项和 EXIF，回复按**观察 / 评价 / 建议**呈现。结果按照片缓存（`photos.vlm_critique`）并按需翻译，另有**重新生成**按钮可重新计算。它基于已存储的缩略图运行，因此 RAW 文件也能正确点评，而不会悄无声息地失败。
+提示词是一条可配置的阶梯（`critique.vlm`），会注入完整的规则拆解、扣分项和 EXIF，回复按**观察 / 评价 / 建议**呈现，并使用当前查看器语言返回。结果按照片及语言缓存（`photos.vlm_critique` / `photos.vlm_critique_language`），另有**重新生成**按钮可重新计算。它基于已存储的缩略图运行，因此 RAW 文件也能正确点评，而不会悄无声息地失败。
 
 API：参见下文的 [API 端点](#api-端点)一节。
 
 由 `viewer.features.show_critique`（默认：`true`）和 `viewer.features.show_vlm_critique`（默认：`true`）控制。
+
+### 个性化建议
+
+点击“为什么是这个评分”后，个性化建议和 AI（人工智能）点评都显示在扣分项下方。个性化建议由 VLM（视觉语言模型）结合当前照片像素、评分明细和相机信息生成，分别面向**提升综合分数**和**提升视觉中国申请分数**，每组最多显示 3 条可执行的拍摄或后期操作；它不会直接修改照片分数，执行操作后仍需重新评分。
+
+建议保存在 `photos.personalized_suggestions` 缓存列中，缓存同时记录语言、建议版本和评分上下文 Hash（哈希摘要）。上下文包含当前指标、综合分数、VCG（视觉中国）申请分数、类别、配置版本和 VCG 分数版本；照片重新评分或切换语言后，旧建议会自动视为过期。首次打开时，命中有效缓存就直接展示，否则自动生成。标题右侧的刷新按钮只重新生成个性化建议，不会刷新现有规则拆解或整段 VLM 点评。
+
+已有缓存可以直接读取；首次生成和刷新需要 Edition（编辑模式）权限。未配置可用 VLM、缺少所需分数或生成失败时会明确显示不可用原因，不会用规则建议冒充个性化建议；刷新失败会保留原缓存。VCG 分数是 Facet 的内部估计，不是视觉中国官方分数，也不代表官方审核规则、版权、市场需求或照片独特性判断。
+
+API（应用程序接口）：参见下文的 [API 端点](#api-端点)一节。
 
 **“为什么是这个评分”可视化叠加层。**当 `viewer.features.show_saliency_overlay` 为 `true`（默认）时，点评对话框会增加一个**显示叠加层**开关：它会把 BiRefNet 显著性图以半透明热力图的形式绘制在照片之上（按需从已存储的缩略图重新计算——`GET /api/saliency_overlay`），再加上由已存储的关键点重建出的柔和人脸框和眼睛标记（`GET /api/photo/face_markers`）。睁眼时框为绿色，闭眼时为琥珀色。热力图只是示意（缩略图分辨率），并非像素级精确；在无法生成显著性掩膜的配置档上，该开关会自行隐藏。
 
@@ -1113,7 +1123,8 @@ python database.py --stats-info
 | `GET /api/type_counts?hide_blinks=&hide_bursts=&hide_duplicates=&hide_brackets=&hide_panoramas=` | 侧边栏类型标签所用的各类型照片数量。与照片库使用同样的五个开关；省略某个开关时会回退到 `viewer.defaults` 而不是“关闭”——要统计全部，请显式发送 `hide_bursts=0` 等 |
 | `GET /api/similar_photos/{path}` | 相似照片（模式：`visual`、`color`、`person`） |
 | `GET /api/search?q=&limit=&threshold=&scope=` | 语义化的以文搜图（`scope=text` = 仅 OCR／描述文本）。`threshold` 为可选参数：省略时会解析为当前生效编码器的 `models.*.search_threshold_percent`（以 `/api/config` 的 `search_threshold_default` 暴露给客户端）；显式传入的值——包括 `0.0`——总会覆盖解析出的默认值。只有当搜索确实执行了嵌入向量检索时才会做这次解析（`scope != 'text'` 会完全跳过解析） |
-| `GET /api/critique?path=&mode=&refresh=` | AI 点评（基于规则或 VLM）；`refresh=true` 会重新生成已缓存的 VLM 点评 |
+| `GET /api/critique?path=&mode=&lang=&refresh=` | AI 点评（基于规则或 VLM）；VLM 点评按 `lang` 当前查看器语言返回，`refresh=true` 会重新生成已缓存的 VLM 点评 |
+| `GET /api/personalized_suggestions?path=&lang=&refresh=` | 当前照片的结构化个性化建议；有效缓存可直接读取，`refresh=true` 仅重新生成个性化建议 |
 | `GET /api/ranker/status` | “我的偏好”排序所用的个人排序模型状态（已学习覆盖率 %、留出集准确率） |
 | `GET /api/config` | 查看器配置 |
 

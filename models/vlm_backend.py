@@ -146,13 +146,15 @@ class OpenAICompatibleBackend(VLMBackend):
     """OpenAI chat-completions client (``POST /chat/completions`` with data-URI images)."""
 
     def __init__(self, base_url: str, api_key: str, model: str,
-                 timeout: int = _DEFAULT_TIMEOUT_SECONDS) -> None:
+                 timeout: int = _DEFAULT_TIMEOUT_SECONDS,
+                 chat_template_kwargs: Optional[dict] = None) -> None:
         self.base_url = _validate_url(base_url, BACKEND_OPENAI_COMPATIBLE)
         if not model:
             raise VLMBackendError("vlm_backend.openai_compatible.model is not configured")
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
+        self.chat_template_kwargs = dict(chat_template_kwargs or {})
 
     def generate(self, image: PIL.Image.Image, prompt: str, max_new_tokens: int) -> str:
         data_uri = f"data:image/jpeg;base64,{_encode_jpeg_base64(image)}"
@@ -170,6 +172,8 @@ class OpenAICompatibleBackend(VLMBackend):
             "max_tokens": int(max_new_tokens),
             "temperature": 0,
         }
+        if self.chat_template_kwargs:
+            payload["chat_template_kwargs"] = self.chat_template_kwargs
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else None
         data = _post_json(f"{self.base_url}{_OPENAI_CHAT_PATH}", payload, self.timeout, headers)
         choices = data.get("choices") or []
@@ -210,6 +214,7 @@ def create_vlm_backend(full_config: Optional[dict]) -> Optional[VLMBackend]:
             cfg.get(_API_KEY_KEY, ""),
             cfg.get(_MODEL_KEY, ""),
             int(cfg.get(_TIMEOUT_KEY, _DEFAULT_TIMEOUT_SECONDS)),
+            cfg.get("chat_template_kwargs"),
         )
     raise VLMBackendError(
         f"Unknown vlm_backend.type: {backend_type!r} "

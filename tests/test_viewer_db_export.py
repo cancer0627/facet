@@ -124,6 +124,32 @@ def test_incremental_export_preserves_viewer_ratings(tmp_path):
     assert rej == 1
 
 
+def test_incremental_export_preserves_viewer_personalized_cache(tmp_path):
+    """A viewer-generated suggestion cache must survive a later scan export."""
+    src = str(tmp_path / 'scan.db')
+    out = str(tmp_path / 'viewer.db')
+    _make_source_db(src)
+    export_viewer_db(src, out, thumbnail_size=320, verbose=False)
+
+    cache = '{"version":"personalized-v1","lang":"zh","aggregate_suggestions":[]}'
+    vconn = sqlite3.connect(out)
+    vconn.execute(
+        "UPDATE photos SET personalized_suggestions = ? WHERE path = ?",
+        (cache, _A),
+    )
+    vconn.commit()
+    vconn.close()
+
+    export_viewer_db(src, out, thumbnail_size=320, verbose=False)
+
+    vconn = sqlite3.connect(out)
+    stored = vconn.execute(
+        "SELECT personalized_suggestions FROM photos WHERE path = ?", (_A,)
+    ).fetchone()[0]
+    vconn.close()
+    assert stored == cache
+
+
 def test_incremental_export_propagates_scan_ratings_when_viewer_unrated(tmp_path):
     src = str(tmp_path / 'scan.db')
     out = str(tmp_path / 'viewer.db')

@@ -4,7 +4,7 @@ import { of } from 'rxjs';
 import { MatDialog } from '@angular/material/dialog';
 import { provideNativeDateAdapter } from '@angular/material/core';
 import { GalleryStore } from './gallery.store';
-import { GalleryFilterSidebarComponent } from './gallery-filter-sidebar.component';
+import { ADDITIONAL_FILTERS, GalleryFilterSidebarComponent } from './gallery-filter-sidebar.component';
 import { I18nService } from '../../core/services/i18n.service';
 import { AuthService } from '../../core/services/auth.service';
 import { AlbumService } from '../../core/services/album.service';
@@ -79,6 +79,14 @@ describe('GalleryFilterSidebarComponent', () => {
 
   it('should create', () => {
     expect(component).toBeTruthy();
+  });
+
+  it('shows only aggregate and aesthetic ranges in the quality section', () => {
+    const qualityFilterIds = ADDITIONAL_FILTERS
+      .filter(def => def.sectionKey === 'gallery.sidebar.quality')
+      .map(def => def.id);
+
+    expect(qualityFilterIds).toEqual(['score_range', 'aesthetic_range']);
   });
 
   describe('clampDef', () => {

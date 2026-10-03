@@ -650,6 +650,7 @@ LIBRARY_JOB_ARGS = (
     'extract_gps',
     'fix_thumbnail_rotation',
     'generate_captions',
+    'generate_critiques',
     'import_sidecars',
     'recompute_average',
     'recompute_blinks',
@@ -2834,6 +2835,23 @@ def main():
         detect_all_sequences(args.db, config.config_path, incremental=True)
         logger.info("Burst detection complete.")
         exit()
+
+    # Generate AI critiques and personalized suggestions
+    if args.generate_critiques:
+        from processing.critique_batch import CritiqueBatchError, initialize_critiques
+
+        init_database(args.db)
+        config = ScoringConfig(args.config)
+        try:
+            summary = initialize_critiques(
+                args.db,
+                config,
+                args.generate_critiques,
+            )
+        except CritiqueBatchError as ex:
+            logger.error("AI critique initialization failed: %s", ex)
+            sys.exit(1)
+        sys.exit(1 if summary.incomplete else 0)
 
     # Generate AI captions
     if args.generate_captions:

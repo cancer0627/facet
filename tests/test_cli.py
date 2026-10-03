@@ -104,7 +104,7 @@ class TestHelpSmoke:
             '--extract-faces-gpu-incremental', '--cluster-faces-force',
             '--export-csv', '--export-json', '--list-models',
             '--doctor', '--optimize-weights', '--comparison-stats',
-            '--validate-categories',
+            '--validate-categories', '--generate-critiques',
         ):
             assert flag in result.stdout, f"flag missing from facet.py --help: {flag}"
 

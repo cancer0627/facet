@@ -79,6 +79,31 @@ def resolve_vlm_config():
     return vlm_config if vlm_config.get('model_path') else None
 
 
+def resolve_personalized_vlm_config():
+    """Resolve the VLM config used by personalized suggestions.
+
+    Keep the active scoring profile authoritative when it already provides a
+    VLM. On local legacy/8gb profiles, use the smaller model configured under
+    ``critique.vlm`` without changing the scan-time tagging model selection.
+    """
+    profile_config = resolve_vlm_config()
+    if profile_config:
+        return profile_config
+
+    from api.config import _FULL_CONFIG
+    from models.vlm_backend import BACKEND_LOCAL, vlm_backend_type
+
+    if vlm_backend_type(_FULL_CONFIG) != BACKEND_LOCAL:
+        return _FULL_CONFIG.get('vlm_backend', {})
+
+    critique_vlm_config = ((_FULL_CONFIG.get('critique') or {}).get('vlm') or {})
+    model_key = critique_vlm_config.get('model_key')
+    if model_key:
+        model_config = (_FULL_CONFIG.get('models') or {}).get(model_key) or {}
+        return model_config if model_config.get('model_path') else None
+    return critique_vlm_config if critique_vlm_config.get('model_path') else None
+
+
 def translation_target(lang):
     """Return the configured translation target when ``lang`` requests it, else None."""
     from api.config import _FULL_CONFIG

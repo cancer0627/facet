@@ -3356,6 +3356,12 @@
       "max_new_tokens": 100,
       "vlm_batch_size": 4
     },
+    "qwen3_5_0_8b": {
+      "model_path": "Qwen/Qwen3.5-0.8B",
+      "torch_dtype": "bfloat16",
+      "max_new_tokens": 100,
+      "vlm_batch_size": 4
+    },
     "qwen3_5_4b": {
       "model_path": "Qwen/Qwen3.5-4B",
       "torch_dtype": "bfloat16",
@@ -3793,6 +3799,7 @@
   },
   "critique": {
     "vlm": {
+      "model_key": "qwen3_5_0_8b",
       "max_new_tokens": 320
     }
   },

@@ -442,7 +442,7 @@ The breakdown also surfaces the explainable **form and color-harmony** rows (sym
 
 Uses the configured VLM (Qwen3.5-2B or Qwen3.5-4B) for a context-aware critique. Requires 16gb or 24gb VRAM profile and `viewer.features.show_vlm_critique: true`.
 
-The prompt is a configurable ladder (`critique.vlm`) that injects the full rule breakdown, penalties and EXIF, and the reply is rendered as **Observation / Assessment / Suggestions**. The result is cached per photo (`photos.vlm_critique`) and translated on demand, with a **Regenerate** button to recompute it. It runs against the stored thumbnail, so RAW files critique correctly instead of failing silently.
+The prompt is a configurable ladder (`critique.vlm`) that injects the full rule breakdown, penalties and EXIF, and the reply is rendered as **Observation / Assessment / Suggestions** in the current viewer language. The result is cached per photo and language (`photos.vlm_critique` / `photos.vlm_critique_language`), with a **Regenerate** button to recompute it. It runs against the stored thumbnail, so RAW files critique correctly instead of failing silently.
 
 API: see the [API Endpoints](#api-endpoints) section below.
 

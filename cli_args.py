@@ -361,6 +361,10 @@ Configuration:
 
     # AI features
     ai_group = parser.add_argument_group('AI features')
+    ai_group.add_argument('--generate-critiques', choices=['en', 'fr', 'de', 'it', 'es', 'pt', 'zh'],
+                        metavar='LANG',
+                        help='Generate missing AI critiques and personalized suggestions for all '
+                             'scored photos in the selected language (requires VLM)')
     ai_group.add_argument('--generate-captions', action='store_true',
                         help='Generate AI captions for photos without one (requires VLM)')
     ai_group.add_argument('--translate-captions', action='store_true',
