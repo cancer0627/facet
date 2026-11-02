@@ -11,6 +11,7 @@
 | 命令 | 说明 |
 |---------|-------------|
 | `python facet.py /path` | 扫描目录（多阶段模式，自动检测 VRAM） |
+| `python facet.py --scan-config` | 扫描 `viewer.scan_directories` 中的全部目录，默认跳过已处理图片；支持 `--config my.json` 指定配置、`--force` 重新处理已有图片。不能与显式路径、`--resume` 或 `--retry-failed` 同用；目录列表为空时报错。 |
 | `python facet.py /path --force` | 重新扫描已处理过的文件 |
 | `python facet.py /path --single-pass` | 强制单阶段模式（一次性加载全部模型） |
 | `python facet.py /path --pass quality` | 仅运行 TOPIQ 画质评分阶段 |
@@ -31,6 +32,10 @@
 | `python facet.py /path --force-low-space` | 跳过扫描前的可用空间检查（即使卷的剩余空间看起来不足以写入本次扫描产生的缩略图和特征向量，也继续执行） |
 
 ### 扫描记录
+
+默认的多阶段扫描会输出 `[扫描耗时]` 日志：每批开始与结束、图片加载与基础分析、各模型加载和计算、模型组卸载、综合评分、结果保存和内存回收。正常结束或用 Ctrl+C 中断时，会按耗时降序汇总各阶段累计秒数、占总耗时比例和调用次数；强制杀进程或断电时无法保证输出汇总。这里统计的是实际经过的时间，模型计算阶段包含预处理与数据传递，并非纯模型计算时间。
+
+主体分割使用兼容子进程时，还会输出 `[主体分割耗时]`，分别记录临时图片编码与写入、子进程往返等待、分割结果读取。往返等待包含子进程读取图片、模型计算和分割结果写入，其耗时已包含在外层主体分割模型阶段内，不能再次相加。新增统计在下一次启动扫描后生效，不会更新已经运行的进程。
 
 每次扫描都会在 `scan_runs` 中记录一行（状态、模式、目录、计数器），
 并把逐文件的错误记入 `scan_failures`（路径、阶段、错误）。用 Ctrl+C 中断
@@ -125,7 +130,8 @@ API 会将其呈现在 `/api/scan/status` 的 `progress` 字段以及 SSE 数据
 | `python facet.py --recompute-form` | 从已存储的缩略图重新计算五项可解释的形式／色彩指标——左右对称性、视觉平衡、边缘方向熵、盒计数分形复杂度，以及 Matsuda 色相模板色彩和谐度（CPU，无需模型）。它们会出现在点评分析、改进建议和照片提示框中，也可作为类别权重使用（出厂值为 0） |
 | `python facet.py --recompute-skin-tone` | 从已存储的人脸缩略图和关键点重新计算人像肤色自然度（脸颊 CIELAB 色度与 CCT 肤色轨迹的 CIEDE2000 色差；CPU，无需模型）。仅供参考——只呈现为一条点评说明，不参与综合评分 |
 | `python facet.py --recompute-distortions` | 通过在已存储的 CLIP/SigLIP 特征向量上使用 ExIQA 风格的零样本对比式提示，为每张照片标注可能的失真属性（运动模糊、偏色、过度锐化等），随后打印与 `liqe_score` ／ `noise_sigma` 的 Spearman 相关性报告。仅供参考（点评中的警示标签），不参与综合评分 |
-| `python facet.py --upgrade-db` | 迁移表结构并运行完整的回填链：提取 GPS、检测重复、重算 IQA、显著性、CPU 构图、连拍、闭眼、眼睛与表情、人脸信号、平均分。幂等；会跳过生成照片描述之类的重负载步骤。 |
+| `python facet.py --upgrade-db` | 迁移表结构，先提取定位、检测重复并建立照片分组，再按模型批量补算：每个画质模型加载一次，处理完该模型所有待补算照片后释放，再进入下一个模型；随后批量完成主体显著性、构图和人脸信号，统一刷新综合评分，最后刷新分组代表帧。默认不生成照片点评和个性化建议；仅显式追加 `--generate-critiques zh` 时，才在所有照片评分及综合分更新完成后批量追加中文点评，也可单独执行 `python facet.py --generate-critiques zh` 初始化。阶段失败后继续后续阶段，最终返回失败状态；跳过有效评价缓存及两项评分均低于 5 分的评价，可中断重跑。不生成照片描述或标签。启动子进程前检查已有评分，跳过已完成及不适用的评分步骤；评分补算涉及的照片（含失败前可能已写入的部分结果）或配置版本变化的照片会刷新综合分；评分前标记综合分待刷新，以便中断后重跑恢复。无人脸或未检出主体造成的空值不会触发对应模型重复加载。主体评分遇到模型库版本不兼容时只报告一次，本轮不再重试该模型阶段，最终仍返回失败状态。图库定位、重复检测和分组检查仍会运行。需要主动重算已有评分时，使用对应的单项重算命令。各阶段使用独立进程，每个实际执行的子步骤记录耗时。 |
+| `python facet.py --upgrade-db --quiet` | 隐藏子步骤的详细输出，保留阶段进度与阶段内已处理照片数 / 总数；多模型评分分别显示当前模型的照片进度，批量推理完成后更新计数。完整子进程输出写入启动时提示的临时日志文件，失败仍会汇总。与 `--upgrade-db` 相同，可追加 `--generate-critiques zh` 显式启用中文评价。 |
 | `python facet.py --recompute-blinks` | 从已存储的关键点重新计算闭眼检测（CPU，快速） |
 | `python facet.py --recompute-eyes-expression` | 从已存储的关键点重新计算睁眼与表情评分（CPU，快速） |
 | `python facet.py --recompute-face-signals` | 从已存储的 106 点关键点回填每张人脸的睁眼与微笑评分（CPU，快速；无需模型）。也是 `--upgrade-db` 的一个步骤 |
@@ -134,7 +140,7 @@ API 会将其呈现在 `/api/scan/status` 的 `progress` 字段以及 SSE 数据
 | `python facet.py --detect-panoramas` | 通过在几何上匹配已存储的缩略图来检测全景照片组（整个照片库，CPU，不解码图像）。与 `--detect-sequences` 一样会先运行包围曝光识别：HDR 全景在每个位置都做了包围曝光，因此两者必须保持同步。对全景／HDR 全景选片粒度和 `hide_panoramas` 开关而言，前提条件与 `--detect-sequences` 相同 |
 | `python facet.py --detect-duplicates` | 通过 pHash 检测重复照片 |
 | `python facet.py --sweep-dedup-thresholds [labels.json]` | 评估近似重复的余弦阈值（有标注时给出精确率／召回率表格，否则给出候选余弦分布） |
-| `python facet.py --generate-critiques LANG` | 使用选定语言（`en`、`fr`、`de`、`it`、`es`、`pt` 或 `zh`），为全部已评分照片补齐 VLM（视觉语言模型）AI（人工智能）点评与个性化建议。综合评分和视觉中国申请评分都严格低于 5 的照片会直接跳过，不加载 VLM。两类有效缓存会分别跳过；每项成功后立即保存，中断后再次运行同一命令即可继续。要求配置的 VLM 后端已经可用 |
+| `python facet.py --generate-critiques LANG` | 使用选定语言（`en`、`fr`、`de`、`it`、`es`、`pt` 或 `zh`），为全部已评分照片补齐 VLM（视觉语言模型）AI（人工智能）点评与个性化建议。综合评分和视觉中国申请评分都严格低于 5 的照片会直接跳过，不加载 VLM。两类有效缓存会分别跳过；每项成功后立即保存，中断后再次运行同一命令即可继续。配置 `vlm_backend.type: llama_cpp` 后，模型在命令进程内加载、结束时释放，无需独立服务；其他后端需确保可用 |
 | `python facet.py --generate-captions` | `[GPU]` `[16gb/24gb]` 使用 VLM 为照片生成 AI 照片描述。当 `narrative_moments.caption_min_confidence > 0` 时，会跳过未标注／标为 `other` ／低于阈值的照片（按需生成描述的接口同样适用该门槛） |
 | `python facet.py --translate-captions` | 把英文照片描述翻译成所配置的目标语言（CPU，MarianMT） |
 | `python facet.py --extract-gps` | 从 EXIF 数据中提取 GPS 坐标写入数据库列 |

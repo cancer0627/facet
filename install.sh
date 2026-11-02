@@ -249,6 +249,11 @@ info "Installing transformers + accelerate..."
 $INSTALLER install "transformers>=5.3.0,<5.16" "accelerate>=0.25.0"
 ok "Transformers installed"
 
+# Use isolated saliency compatibility dependencies for older PyTorch versions.
+if $PYTHON -c 'from models.saliency_compat import needs_compat_worker; raise SystemExit(0 if needs_compat_worker() else 1)'; then
+    $PYTHON scripts/install_saliency_compat.py
+fi
+
 # --- Step 9: Check exiftool ---
 echo ""
 if command -v exiftool &>/dev/null; then

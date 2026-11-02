@@ -6,25 +6,29 @@ import json
 import logging
 from dataclasses import dataclass
 
-from tqdm import tqdm
+from processing.upgrade_progress import PhotoProgress
 
 from api.routers.critique import (
     _PERSONALIZED_COLUMNS,
     _build_rule_critique,
     _generate_personalized_suggestions,
+    _generate_combined_critique,
     _generate_vlm_critique,
     _load_critique_image,
     _make_personalized_cache_payload,
     _read_personalized_cache,
     _read_vlm_cache,
     _score_value,
+    _should_combine_critiques,
 )
 from db import get_connection
+from utils.photo_scope import photo_scope_sql
+from i18n import SUPPORTED_LANGUAGES
 from models.vlm_backend import VLMBackendError, create_remote_vlm_tagger
 
 logger = logging.getLogger("facet.critique_batch")
 
-SUPPORTED_CRITIQUE_LANGUAGES = ('en', 'fr', 'de', 'it', 'es', 'pt', 'zh')
+SUPPORTED_CRITIQUE_LANGUAGES = SUPPORTED_LANGUAGES
 _AI_GENERATION_SCORE_THRESHOLD = 5.0
 
 _MODEL_KEY_MAP = {
@@ -86,7 +90,7 @@ def _select_columns() -> str:
     return ', '.join(columns)
 
 
-def initialize_critiques(db_path, scoring_config, lang, tagger=None):
+def initialize_critiques(db_path, scoring_config, lang, tagger=None, photo_path=None):
     """Fill missing critique caches for every scored photo in ``db_path``.
 
     Valid caches are skipped independently. Each successful cache write is
@@ -118,7 +122,9 @@ def initialize_critiques(db_path, scoring_config, lang, tagger=None):
             # A short per-photo SELECT, closed before inference, lets every
             # cache write start from a current transaction instead.
             path_cursor = conn.execute(
-                "SELECT path FROM photos WHERE aggregate IS NOT NULL ORDER BY path"
+                "SELECT path FROM photos WHERE aggregate IS NOT NULL"
+                + photo_scope_sql(photo_path)[0] + " ORDER BY path",
+                photo_scope_sql(photo_path)[1]
             )
             try:
                 photo_paths = [row['path'] for row in path_cursor.fetchall()]
@@ -128,8 +134,12 @@ def initialize_critiques(db_path, scoring_config, lang, tagger=None):
             counts['total'] = total
             logger.info("Initializing AI critiques and personalized suggestions for %d photos...", total)
 
-            with tqdm(total=total, desc="AI critique initialization") as progress:
-                for path in photo_paths:
+            with PhotoProgress(
+                total=total, desc="Photo critiques",
+                bar_format="{desc} | Completed {n_fmt}/{total_fmt}",
+            ) as progress:
+                for index, path in enumerate(photo_paths, 1):
+                    progress.set_description_str(f"Photo critiques: processing {index}/{total}")
                     row_cursor = conn.execute(
                         f"SELECT {_select_columns()} FROM photos "
                         "WHERE path = ? AND aggregate IS NOT NULL",
@@ -181,8 +191,16 @@ def initialize_critiques(db_path, scoring_config, lang, tagger=None):
                         rule_critique = _build_rule_critique(photo, scoring_config)
                         image = _load_critique_image(path, photo.get('thumbnail'))
 
+                        critique = suggestions = None
+                        if (_should_combine_critiques(scoring_config.config)
+                                and not has_critique and not has_suggestions
+                                and aggregate_score is not None and vcg_score is not None):
+                            critique, suggestions = _generate_combined_critique(
+                                tagger, photo, rule_critique, image, lang, scoring_config.config,
+                            )
+
                         if not has_critique:
-                            critique = _generate_vlm_critique(
+                            critique = critique or _generate_vlm_critique(
                                 tagger,
                                 photo,
                                 rule_critique,
@@ -203,7 +221,7 @@ def initialize_critiques(db_path, scoring_config, lang, tagger=None):
 
                         if not has_suggestions:
                             if aggregate_score is not None and vcg_score is not None:
-                                suggestions = _generate_personalized_suggestions(
+                                suggestions = suggestions or _generate_personalized_suggestions(
                                     tagger,
                                     photo,
                                     rule_critique,

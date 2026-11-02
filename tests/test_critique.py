@@ -571,6 +571,71 @@ class TestPersonalizedSuggestions:
         assert body["aggregate_suggestions"][0]["action"] == "旧综合建议"
         generator.assert_not_called()
 
+    def test_combined_generation_populates_both_caches(self, client, tmp_path):
+        db = str(tmp_path / "combined.db")
+        photo = _make_photo()
+        _make_db(db, [photo])
+        suggestions = {
+            "aggregate_suggestions": [{"action": "裁切", "reason": "突出主体"}],
+            "vcg_suggestions": [{"action": "调整高光", "reason": "保留细节"}],
+        }
+        with self._endpoint_patches(db) as separate, mock.patch(
+            "api.routers.critique._FULL_CONFIG", {"vlm_backend": {"type": "openai_compatible"}},
+        ), mock.patch(
+            "api.routers.critique.resolve_vlm_config", return_value={"model_path": "/m"},
+        ), mock.patch(
+            "api.routers.critique._get_combined_critique",
+            return_value=("观察：山景。评价：光线自然。建议：裁切。", suggestions),
+        ) as combined, mock.patch("api.routers.critique._get_vlm_critique") as fallback:
+            response = client.get("/api/critique", params={
+                "path": photo['path'], "lang": "zh", "mode": "combined",
+            })
+            assert response.status_code == 200
+            assert response.json()['vlm_source'] == 'generated'
+            cached = client.get("/api/personalized_suggestions", params={
+                "path": photo['path'], "lang": "zh",
+            })
+            assert cached.json()['source'] == 'cached'
+            combined.assert_called_once()
+            separate.assert_not_called()
+            fallback.assert_not_called()
+
+    def test_llama_cpp_combined_request_uses_separate_generation(self, client, tmp_path):
+        db = str(tmp_path / "local-separate.db")
+        photo = _make_photo()
+        _make_db(db, [photo])
+        suggestions = {
+            "aggregate_suggestions": [{"action": "裁切", "reason": "突出主体"}],
+            "vcg_suggestions": [{"action": "调整高光", "reason": "保留细节"}],
+        }
+        with self._endpoint_patches(db, generated=suggestions) as separate, mock.patch(
+            "api.routers.critique._FULL_CONFIG", {"vlm_backend": {"type": "llama_cpp"}},
+        ), mock.patch("api.routers.critique._get_combined_critique") as combined, mock.patch(
+            "api.routers.critique._get_vlm_critique", return_value="观察：山景。评价：清晰。建议：裁切。",
+        ) as critique:
+            params = {"path": photo['path'], "lang": "zh", "mode": "combined"}
+            response = client.get("/api/critique", params=params)
+            assert response.status_code == 200
+            assert response.json()['vlm_source'] == 'generated'
+            assert client.get("/api/personalized_suggestions", params=params).json()['source'] == 'generated'
+            assert client.get("/api/critique", params=params).json()['vlm_source'] == 'cached'
+            assert client.get("/api/personalized_suggestions", params=params).json()['source'] == 'cached'
+            critique.assert_called_once()
+            separate.assert_called_once()
+            combined.assert_not_called()
+
+            # Refreshing suggestions alone only calls the suggestion generator.
+            response = client.get("/api/personalized_suggestions", params={**params, 'refresh': 'true'})
+            assert response.status_code == 200
+            assert separate.call_count == 2
+            critique.assert_called_once()
+            # Refreshing the critique alone only calls the critique generator.
+            response = client.get("/api/critique", params={**params, 'mode': 'vlm', 'refresh': 'true'})
+            assert response.status_code == 200
+            assert critique.call_count == 2
+            assert separate.call_count == 2
+            combined.assert_not_called()
+
     def test_missing_cache_generates_and_persists(self, client, tmp_path):
         db = str(tmp_path / "critique.db")
         photo = _make_photo()

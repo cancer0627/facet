@@ -316,6 +316,8 @@ async def lifespan(app: FastAPI):
                 conn.close()
         except Exception:
             logger.warning("Final WAL checkpoint on shutdown failed", exc_info=True)
+    from api.model_cache import unload_vlm_tagger
+    unload_vlm_tagger()
     # Shutdown: clean up plugin thread pool
     from plugins import get_plugin_manager
     _plugin_mgr = get_plugin_manager()

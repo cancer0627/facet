@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from time import perf_counter
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -28,6 +29,16 @@ from api.model_cache import (
 
 router = APIRouter(tags=["critique"])
 logger = logging.getLogger(__name__)
+
+_CRITIQUE_LANGUAGE_NAMES = {
+    'en': 'English',
+    'fr': 'French',
+    'de': 'German',
+    'it': 'Italian',
+    'es': 'Spanish',
+    'pt': 'Portuguese',
+    'zh': 'Simplified Chinese',
+}
 
 # Score thresholds for strength/weakness classification
 _STRENGTH_THRESHOLD = 7.5
@@ -648,6 +659,7 @@ def _build_personalized_prompt(photo, rule_critique, lang, full_config=None):
     suitability = _score_value(photo.get('vcg_suitability_score'))
     category = photo.get('category') or 'photo'
     output_lang = lang or 'en'
+    language_name = _CRITIQUE_LANGUAGE_NAMES.get(output_lang, output_lang)
     vlm_config = ((full_config.get('critique') or {}).get('vlm') or {})
     try:
         max_suggestions = int(vlm_config.get('personalized_max_items', _PERSONALIZED_SUGGESTION_LIMIT))
@@ -663,7 +675,7 @@ def _build_personalized_prompt(photo, rule_critique, lang, full_config=None):
     return (
         "You are an expert photography improvement coach. Inspect the current "
         f"{category} photograph itself and produce concrete, executable advice in "
-        f"the requested language ({output_lang}). Facet's current aggregate score "
+        f"{language_name} ({output_lang}). Facet's current aggregate score "
         f"is {aggregate if aggregate is not None else 'unavailable'}/10. Its internal "
         "Visual China suitability estimate is "
         f"{suitability if suitability is not None else 'unavailable'}/10, and its "
@@ -677,15 +689,17 @@ def _build_personalized_prompt(photo, rule_critique, lang, full_config=None):
         "Return only valid JSON with exactly four string fields and no Markdown or "
         "explanation outside the JSON object. Use this compact shape so the "
         "result is unambiguous:\n"
-        '{"aggregate_action":"具体行动","aggregate_reason":"对应当前照片问题",'
-        '"vcg_action":"具体行动","vcg_reason":"对应视觉中国申请场景"}\n'
+        '{"aggregate_action":"<action>","aggregate_reason":"<reason>",'
+        '"vcg_action":"<action>","vcg_reason":"<reason>"}\n'
         f"The API will place these into two suggestion groups, each with at most 3 items; {suggestion_count_instruction} "
         "Keep each action and reason concise, preferably under 20 words. Every action must be concrete and "
         "executable, and must clearly distinguish a shooting change from a "
         "post-processing change. Base every reason on visible pixels or the supplied "
         "score context. Do not predict any numeric score increase. Do not claim to "
         "know official Visual China review rules. Do not infer copyright, market "
-        "demand, commercial value, or uniqueness from the image."
+        "demand, commercial value, or uniqueness from the image. "
+        f"Write all four values entirely in {language_name} ({output_lang}); "
+        "keep the four JSON field names unchanged. Do not copy placeholder values."
     )
 
 
@@ -700,6 +714,7 @@ async def api_critique(
     """Get AI critique for a photo's score.
 
     Modes:
+      - combined: Generate missing critique and suggestions in one model call.
       - rule: Fast rule-based analysis (always available)
       - vlm: VLM-powered natural language critique (requires GPU + a profile
         with a VLM tagging model). The generated text is cached per photo;
@@ -714,7 +729,7 @@ async def api_critique(
         vis_sql, vis_params = get_visibility_clause(user_id)
 
         # Select only columns needed for critique (avoid loading BLOB fields).
-        col_str = ', '.join(_CRITIQUE_COLUMNS)
+        col_str = ', '.join(_PERSONALIZED_COLUMNS if mode == 'combined' else _CRITIQUE_COLUMNS)
         cur = await conn.execute(
             f"SELECT {col_str} FROM photos WHERE path = ? AND {vis_sql}",
             [path] + vis_params
@@ -728,8 +743,10 @@ async def api_critique(
         photo = dict(photo)
         result = _build_rule_critique(photo)
 
-        if mode == 'vlm':
-            await _attach_vlm_critique(conn, photo, result, lang, refresh, user)
+        if mode in ('vlm', 'combined'):
+            await _attach_vlm_critique(
+                conn, photo, result, lang, refresh, user, combine=mode == 'combined',
+            )
 
         return result
 
@@ -875,7 +892,7 @@ async def api_personalized_suggestions(
         )
 
 
-async def _attach_vlm_critique(conn, photo, result, lang, refresh, user):
+async def _attach_vlm_critique(conn, photo, result, lang, refresh, user, combine=False):
     """Attach a cached or freshly generated VLM critique to the rule result."""
     path = photo['path']
     requested_lang = lang or 'en'
@@ -914,9 +931,34 @@ async def _attach_vlm_critique(conn, photo, result, lang, refresh, user):
         thumbnail = row['thumbnail'] if row else None
         # VLM inference is GPU/CPU-bound and blocking — run it off the
         # event loop so it never stalls other async requests.
-        text = await asyncio.to_thread(
-            _get_vlm_critique, photo, result, thumbnail, requested_lang,
-        )
+        if (combine and _should_combine_critiques(_FULL_CONFIG)
+                and not refresh and 'personalized_suggestions' in existing_cols
+                and resolve_vlm_config() == resolve_personalized_vlm_config()
+                and _score_value(photo.get('aggregate')) is not None
+                and _score_value(photo.get('vcg_submission_score')) is not None):
+            cur = await conn.execute(
+                "SELECT personalized_suggestions FROM photos WHERE path = ?", [path],
+            )
+            suggestion_row = await cur.fetchone()
+            await cur.close()
+            cached_suggestions = _read_personalized_cache(
+                suggestion_row['personalized_suggestions'], photo, requested_lang,
+            ) if suggestion_row else None
+            if not cached_suggestions:
+                text, suggestions = await asyncio.to_thread(
+                    _get_combined_critique, photo, result, thumbnail, requested_lang,
+                )
+                if suggestions:
+                    payload = _make_personalized_cache_payload(photo, requested_lang, suggestions)
+                    await conn.execute(
+                        "UPDATE photos SET personalized_suggestions = ? WHERE path = ?",
+                        [json.dumps(payload, ensure_ascii=False), path],
+                    )
+                    await conn.commit()
+        if not text:
+            text = await asyncio.to_thread(
+                _get_vlm_critique, photo, result, thumbnail, requested_lang,
+            )
         source = 'generated'
         if text and can_cache:
             assignments = [
@@ -998,16 +1040,7 @@ def _build_vlm_prompt(rule_critique, photo, lang='en', full_config=None):
         penalties=penalties,
         exif=exif,
     )
-    language_names = {
-        'en': 'English',
-        'fr': 'French',
-        'de': 'German',
-        'it': 'Italian',
-        'es': 'Spanish',
-        'pt': 'Portuguese',
-        'zh': 'Simplified Chinese',
-    }
-    language_name = language_names.get(lang, lang)
+    language_name = _CRITIQUE_LANGUAGE_NAMES.get(lang, lang)
     return (
         f"{prompt}\n\nRespond entirely in {language_name} ({lang}), "
         "including the section headings. Do not switch to another language."
@@ -1043,8 +1076,7 @@ def _generate_vlm_critique(tagger, photo, rule_critique, image, lang='en', full_
     max_new_tokens = int(
         full_config.get('critique', {}).get('vlm', {}).get('max_new_tokens', 320)
     )
-    with vlm_generate_lock:
-        response = tagger.generate(image, prompt, max_new_tokens=max_new_tokens)
+    response = _timed_critique_generate(tagger, image, prompt, max_new_tokens)
     response = (response or '').strip()
     return response or None
 
@@ -1058,8 +1090,7 @@ def _generate_personalized_suggestions(tagger, photo, rule_critique, image,
     max_new_tokens = int(
         vlm_settings.get('personalized_max_new_tokens', vlm_settings.get('max_new_tokens', 384))
     )
-    with vlm_generate_lock:
-        response = tagger.generate(image, prompt, max_new_tokens=max_new_tokens)
+    response = _timed_critique_generate(tagger, image, prompt, max_new_tokens)
     return _parse_personalized_suggestions(response)
 
 
@@ -1102,3 +1133,71 @@ def _get_personalized_suggestions(photo, rule_critique, thumbnail_bytes, lang='e
     except Exception:
         logger.exception("Personalized suggestions generation failed")
         return None
+
+
+def _timed_critique_generate(tagger, image, prompt, max_new_tokens):
+    started = perf_counter()
+    with vlm_generate_lock:
+        acquired = perf_counter()
+        try:
+            return tagger.generate(image, prompt, max_new_tokens=max_new_tokens)
+        finally:
+            logger.info(
+                "Photo critique timing: queue %.2fs, model call %.2fs, output limit %d",
+                acquired - started, perf_counter() - acquired, max_new_tokens,
+            )
+
+
+def _should_combine_critiques(full_config):
+    # The current small in-process model cannot reliably follow the combined format; generate separately to avoid fallback calls.
+    return (full_config.get('vlm_backend') or {}).get('type') != 'llama_cpp'
+
+
+def _generate_combined_critique(tagger, photo, rule_critique, image, lang='en', full_config=None):
+    """Use one image inference for both caches; validate each part independently."""
+    full_config = _FULL_CONFIG if full_config is None else full_config
+    prompt = (
+        _build_vlm_prompt(rule_critique, photo, lang, full_config)
+        + "\nAlso provide two concise actionable improvements, one for overall quality "
+        "and one for the internal Visual China submission estimate. "
+        "Do not claim official review rules or predict score increases. "
+        "Return only a valid JSON object with five string fields: critique, "
+        "aggregate_action, aggregate_reason, vcg_action, vcg_reason. "
+        "Put the three titled critique sections inside the critique string, "
+        "escaping newlines. Keep each action and reason brief. "
+        f"Internal submission estimate: {photo.get('vcg_submission_score')}/10."
+    )
+    settings = full_config.get('critique', {}).get('vlm', {})
+    budget = int(settings.get('max_new_tokens', 320)) + int(
+        settings.get('personalized_max_new_tokens', settings.get('max_new_tokens', 384))
+    )
+    response = _timed_critique_generate(tagger, image, prompt, budget)
+    raw = (response or '').strip()
+    if raw.startswith('```'):
+        raw = '\n'.join(raw.splitlines()[1:])
+        if raw.rstrip().endswith('```'):
+            raw = raw.rstrip()[:-3]
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    text = payload.get('critique')
+    text = text.strip() if isinstance(text, str) else None
+    return text or None, _parse_personalized_suggestions(raw)
+
+
+def _get_combined_critique(photo, rule_critique, thumbnail_bytes, lang):
+    try:
+        if not VIEWER_CONFIG.get('features', {}).get('show_vlm_critique', False):
+            return None, None
+        config = resolve_vlm_config()
+        if not config:
+            return None, None
+        tagger = get_or_load_vlm_tagger(config)
+        image = _load_critique_image(photo['path'], thumbnail_bytes)
+        return _generate_combined_critique(tagger, photo, rule_critique, image, lang)
+    except Exception:
+        logger.exception("Combined photo critique failed")
+        return None, None

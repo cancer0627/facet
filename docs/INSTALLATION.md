@@ -729,3 +729,31 @@ npm start        # Dev server on http://localhost:4200 (proxies API to :5000)
 > `npm audit` will report findings, most of them in build-time dev dependencies that
 > never reach the browser. Review the list before running `npm audit fix` — it can
 > silently downgrade or remove packages.
+
+
+## In-process GGUFcritiques
+
+Install the optional backendin the project environment with
+`python -m pip install '.[llama-cpp]'`. On Intel macOS, use
+`CMAKE_ARGS='-DGGML_METAL=OFF -DGGML_NATIVE=OFF' CMAKE_BUILD_PARALLEL_LEVEL=4 python -m pip install '.[llama-cpp]'`
+when building locally.
+
+Set `vlm_backend.type` to `llama_cpp`, and configure `vlm_backend.llama_cpp`
+with `model_path` and `mmproj_path` pointing to existing local GGUF files.
+Optional settings are `n_ctx: 4096`, `n_threads: 4`, and `image_tokens: 256`.
+The model runs in the Python process, with no model server or port required.
+The dependency is pinned to llama-cpp-python 0.3.36 for its multimodal handler.
+Other backends remain available and the shipped default remains `local`.
+
+`python facet.py --upgrade-db` only performs scoring and the associated database
+upgrades by default. Use `python facet.py --generate-critiques zh` to initialize
+Chinese photo critiques and personalized suggestions independently, or
+`python facet.py --upgrade-db --generate-critiques zh` to generate them after all
+scoring and aggregate updates. Generation only runs when explicitly requested.
+With `vlm_backend.type: llama_cpp`, the command loads the model in its own process;
+no separate model service is needed.
+The viewer follows its selected language. Only the latest language is cached
+per photo; switching language generates replacements on demand. Valid caches
+are skipped, each result is committed immediately, and interrupted jobs resume.
+The batch releases the model on completion; missing dependencies or models
+produce explicit failures. This does not initialize captions or tags.

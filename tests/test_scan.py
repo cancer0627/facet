@@ -1533,6 +1533,10 @@ class TestUpgradeDbSchemaLock:
             during_chain.append(facet.library_job_holder(db_path))
             return subprocess.CompletedProcess(cmd, 0)
 
+        # The migration is mocked here; provide the photo enumeration separately.
+        connection = mock.MagicMock()
+        connection.__enter__.return_value.execute.return_value.fetchall.return_value = []
+        monkeypatch.setattr(facet, "get_connection", lambda _path, **kwargs: connection)
         monkeypatch.setattr(facet, "init_database", recording_init_database)
         monkeypatch.setattr(subprocess, "run", recording_run)
         monkeypatch.setattr(sys, "argv", ["facet.py", "--upgrade-db", "--db", db_path])
@@ -1548,6 +1552,44 @@ class TestUpgradeDbSchemaLock:
         assert during_chain, "the backfill chain never ran"
         assert all(holder is None for holder in during_chain), (
             "the chain inherited the parent's lock and would deadlock on it")
+
+    @pytest.mark.parametrize("lang", ["en", "fr", "de", "it", "es", "pt", "zh"])
+    @pytest.mark.parametrize("exit_code", [0, 7])
+    def test_upgrade_critique_language_order_and_lock(self, tmp_path, monkeypatch, lang, exit_code):
+        import facet
+
+        db_path = str(tmp_path / "photos.db")
+        config_path = str(tmp_path / "config.json")
+        with open(config_path, 'w') as config_file:
+            json.dump({}, config_file)
+        calls = []
+        monkeypatch.setattr(facet, "init_database", lambda _path: None)
+        connection = mock.MagicMock()
+        connection.__enter__.return_value.execute.return_value.fetchall.return_value = [
+            {'path': '/photos/a.jpg'}, {'path': '/photos/b.jpg'},
+        ]
+        monkeypatch.setattr(facet, "get_connection", lambda _path, **kwargs: connection)
+
+        def run(cmd, **kwargs):
+            assert facet.library_job_holder(db_path) is None
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, exit_code if "--generate-critiques" in cmd else 0)
+
+        monkeypatch.setattr(facet, '_upgrade_photo_work', lambda *_args: {})
+        monkeypatch.setattr(subprocess, "run", run)
+        argv = ["facet.py", "--upgrade-db", "--db", db_path, "--config", config_path]
+        argv += ["--generate-critiques", lang]
+        monkeypatch.setattr(sys, "argv", argv)
+        with pytest.raises(SystemExit) as result:
+            facet.main()
+        assert result.value.code == (1 if exit_code else 0)
+        photo_calls = [cmd for cmd in calls if '--upgrade-photos-file' in cmd]
+        assert len(photo_calls) == 8
+        assert photo_calls[6][-3] == '--recompute-average'
+        assert photo_calls[7][-4:-2] == ['--generate-critiques', lang]
+        assert photo_calls[7][2:6] == ['--db', db_path, '--config', config_path]
+        assert calls[-2][-1] == '--recompute-burst'
+        assert calls[-1][-1] == '--detect-sequences'
 
     def test_a_running_recompute_defers_the_migration_instead_of_altering_into_it(
             self, tmp_path, monkeypatch):
@@ -1820,7 +1862,7 @@ _JOB_MODIFIERS = frozenset({
     "optimize_sources", "ranker_category", "refresh_thumbnails_workers", "resume",
     "retry_failed", "score_to_stars",
     "simulate", "simulate_gpu", "simulate_vram", "single_pass", "single_pass_name",
-    "train_keeper_force", "train_ranker_force", "user", "verbose", "watch_debounce",
+    "train_keeper_force", "train_ranker_force", "upgrade_photo", "upgrade_photos_file", "quiet", "user", "verbose", "watch_debounce",
 })
 
 _READ_ONLY_LIBRARY_COMMANDS = frozenset({

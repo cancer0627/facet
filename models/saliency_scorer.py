@@ -101,6 +101,7 @@ class SaliencyScorer:
         self.model = None
         self.transform = None
         self._loaded = False
+        self._compat_worker = None
 
     def load(self):
         """Load BiRefNet, in float32 anywhere without a dedicated GPU.
@@ -116,14 +117,38 @@ class SaliencyScorer:
         if self._loaded:
             return
 
+        from models.saliency_compat import needs_compat_worker, SaliencyWorker, BIREFNET_REVISION
+        if needs_compat_worker():
+            if self.model_name != self.DEFAULT_MODEL:
+                raise ValueError('The compatibility environment only supports the pinned default BiRefNet segmentation model.')
+            self._compat_worker = SaliencyWorker(dict(
+                device=self.device, model_name=self.model_name, resolution=self.resolution,
+                mask_threshold=self.mask_threshold, min_subject_pixels=self.min_subject_pixels,
+            ))
+            self._loaded = True
+            return
+
         from transformers import AutoModelForImageSegmentation
         import torchvision.transforms as T
 
+        # Only load pinned official code and safetensors weights in the compatibility environment.
+        import os
+        pinned = (dict(revision=BIREFNET_REVISION, use_safetensors=True)
+                  if os.environ.get('FACET_SALIENCY_WORKER') == '1' else {})
+        model_source = self.model_name
+        if pinned:
+            from models.saliency_compat import local_model_directory
+            local_model = local_model_directory()
+            if (local_model / 'model.safetensors').is_file():
+                model_source = str(local_model)
+                pinned = dict(local_files_only=True, use_safetensors=True)
         self.model = AutoModelForImageSegmentation.from_pretrained(
-            self.model_name, trust_remote_code=True
-        )
+            model_source, trust_remote_code=True, **pinned)
         if not self.device.startswith(self.DEDICATED_VRAM_DEVICE):
             self.model = self.model.float()
+        if self.device == 'cpu':
+            # 通道末置内存布局可加快中央处理器卷积，不改变输入分辨率。
+            self.model.to(memory_format=torch.channels_last)
         self.model.to(self.device).eval()
 
         self.transform = T.Compose([
@@ -140,6 +165,9 @@ class SaliencyScorer:
         if not self._loaded:
             return
 
+        if self._compat_worker is not None:
+            self._compat_worker.close()
+            self._compat_worker = None
         if self.model is not None:
             del self.model
             self.model = None
@@ -237,6 +265,9 @@ class SaliencyScorer:
         if not self._loaded:
             self.load()
 
+        if self._compat_worker is not None:
+            return self._compat_worker.predict(pil_images, batch_size=batch_size)
+
         batch_size = self._affordable_batch_size(batch_size)
         logger.debug("  Saliency batch size %d for %d image(s) on %s",
                      batch_size, len(pil_images), self.device)
@@ -247,8 +278,10 @@ class SaliencyScorer:
         for start in range(0, len(pil_images), batch_size):
             chunk = pil_images[start:start + batch_size]
             batch_tensor = torch.stack([self.transform(img) for img in chunk]).to(self.device, dtype=next(self.model.parameters()).dtype)
+            if self.device == 'cpu':
+                batch_tensor = batch_tensor.contiguous(memory_format=torch.channels_last)
 
-            with torch.no_grad():
+            with torch.inference_mode():
                 preds = self.model(batch_tensor)[-1].sigmoid()
 
             for i, pred in enumerate(preds):
@@ -274,10 +307,15 @@ class SaliencyScorer:
         if not self._loaded:
             self.load()
 
+        if self._compat_worker is not None:
+            return self._compat_worker.predict([pil_img], soft=True)[0]
+
         orig_w, orig_h = pil_img.size
         batch_tensor = torch.stack([self.transform(pil_img)]).to(
             self.device, dtype=next(self.model.parameters()).dtype)
-        with torch.no_grad():
+        if self.device == 'cpu':
+            batch_tensor = batch_tensor.contiguous(memory_format=torch.channels_last)
+        with torch.inference_mode():
             pred = self.model(batch_tensor)[-1].sigmoid()[0]
         soft = pred.squeeze().cpu().numpy().astype(np.float32)
         if soft.shape[0] != orig_h or soft.shape[1] != orig_w:

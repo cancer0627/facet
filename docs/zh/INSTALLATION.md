@@ -708,3 +708,72 @@ npm start        # 开发服务器，运行在 http://localhost:4200（把 API �
 > **`npm audit` 警告：** Angular 会带入一棵很深的传递依赖树，`npm audit` 必然会
 > 报出一些问题，其中多数都在构建期的开发依赖里，永远不会进入浏览器。运行
 > `npm audit fix` 之前请先审阅清单 —— 它可能会悄悄降级或移除某些软件包。
+
+
+## Intel Mac 主体评分兼容依赖
+
+当 PyTorch（深度学习框架）低于 2.5 且 Transformers（模型加载库）为 5.x 时，
+主体评分自动使用独立进程和 `venv/saliency-compat` 中的兼容依赖，主环境的依赖版本保持原样。
+`install.sh` 会自动安装；已有环境可以执行：
+
+```bash
+venv/bin/python scripts/install_saliency_compat.py --download-model
+```
+
+官方模型站点连接失败时，可显式使用镜像下载同一固定版本：
+
+```bash
+venv/bin/python scripts/install_saliency_compat.py --download-model --endpoint https://hf-mirror.com
+```
+
+兼容进程仅支持固定版本的默认 BiRefNet（主体分割模型），加载安全张量权重；
+模型缓存保存在项目 `pretrained_models/BiRefNet_dynamic` 下。下载完成后可离线加载，
+命令行评分和网页主体热力图均自动使用此兼容路径。兼容修复解决加载失败，实际推理仍需耗时。
+
+## 进程内量化模型评价
+
+选择 `llama_cpp` 后端时，Facet 通过 Python 直接加载 GGUF（量化模型文件格式）
+主模型和视觉投影文件，不需要运行 `llama_server.py` 或开放8765端口。
+在项目虚拟环境中安装可选依赖：
+
+```bash
+python -m pip install '.[llama-cpp]'
+```
+
+Intel Mac 如需本机编译，可使用：
+
+```bash
+CMAKE_ARGS='-DGGML_METAL=OFF -DGGML_NATIVE=OFF' CMAKE_BUILD_PARALLEL_LEVEL=4 python -m pip install '.[llama-cpp]'
+```
+
+将下列配置合并到 `scoring_config.json`，两个路径均需替换为本机实际文件。
+不自动下载模型。现有 `local`、`ollama`、`openai_compatible` 后端仍可选择。
+
+```json
+{
+  "vlm_backend": {
+    "type": "llama_cpp",
+    "llama_cpp": {
+      "model_path": "/absolute/path/Qwen3.5-0.8B-Q4_0.gguf",
+      "mmproj_path": "/absolute/path/mmproj-BF16.gguf",
+      "n_ctx": 4096,
+      "n_threads": 4,
+      "image_tokens": 256
+    }
+  }
+}
+```
+
+```bash
+python facet.py --upgrade-db
+python facet.py --upgrade-db --generate-critiques zh
+python facet.py --generate-critiques fr
+```
+
+第一条默认只完成评分及配套数据库升级，不生成照片点评或个性化建议。
+第二条在全部评分及综合分更新后显式追加中文点评；第三条单独补全法语点评及个性化建议。
+点评初始化只由 `--generate-critiques LANG` 触发。配置 `vlm_backend.type: llama_cpp` 后，
+模型在执行命令的进程内加载，无需启动独立模型服务。
+网页评价跟随当前界面语言。每张照片只保存最近一种语言，切换语言时按需重新生成，
+不会预先生成全部语言。批处理逐项保存，可中断续跑，模型在批处理结束时释放。
+进程内推理仍受本机处理器速度影响。缺依赖、模型文件或加载失败会明确报错。

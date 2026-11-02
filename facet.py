@@ -1373,6 +1373,37 @@ def _library_job_requested(args):
     return any(getattr(args, name) for name in LIBRARY_JOB_ARGS)
 
 
+def _upgrade_photo_work(db_path, config):
+    """Check existing results before starting subprocesses; allow null fields when no face or subject is detected.
+
+    Read only paths needing backfill in the parent process, avoiding thumbnail and face-landmark binary data.
+    """
+    iqa_missing = ('aesthetic_iaa IS NULL OR liqe_score IS NULL OR '
+                   '(face_count > 0 AND face_quality_iqa IS NULL)')
+    if config.get_extended_iqa_settings().get('qrealign'):
+        iqa_missing += ' OR qrealign_score IS NULL'
+    predicates = {
+        '--recompute-iqa': f'thumbnail IS NOT NULL AND ({iqa_missing})',
+        '--recompute-saliency': 'thumbnail IS NOT NULL AND subject_sharpness IS NULL',
+        '--recompute-composition-cpu': 'thumbnail IS NOT NULL AND '
+            '(comp_score IS NULL OR power_point_score IS NULL OR leading_lines_score IS NULL)',
+        '--recompute-blinks': 'face_count > 0 AND is_blink IS NULL',
+        '--recompute-eyes-expression': '(eyes_open_score IS NULL OR expression_score IS NULL) AND '
+            'EXISTS (SELECT 1 FROM faces f WHERE f.photo_path = photos.path AND landmark_2d_106 IS NOT NULL)',
+        '--recompute-face-signals': 'EXISTS (SELECT 1 FROM faces f WHERE f.photo_path = photos.path '
+            'AND landmark_2d_106 IS NOT NULL AND (eyes_open_score IS NULL OR smile_score IS NULL))',
+        '--recompute-average': 'aggregate IS NULL OR config_version IS NULL OR config_version != ?',
+    }
+    with get_connection(db_path) as conn:
+        return {
+            flag: {row['path'] for row in conn.execute(
+                f'SELECT path FROM photos WHERE {predicate}',
+                (config.version_hash,) if flag == '--recompute-average' else (),
+            ).fetchall()}
+            for flag, predicate in predicates.items()
+        }
+
+
 def _upgrade_db_schema(args, db_path):
     """Migrate the schema under the library lock; returns the columns added.
 
@@ -1916,8 +1947,17 @@ def main():
 
     parser = cli_args.build_parser()
     args = parser.parse_args()
+    if args.upgrade_photos_file:
+        if args.upgrade_photo is not None:
+            parser.error("--upgrade-photo and --upgrade-photos-file are mutually exclusive")
+        with open(args.upgrade_photos_file, encoding='utf-8') as scope_file:
+            args.upgrade_photo = json.load(scope_file)
+        if not isinstance(args.upgrade_photo, list) or not all(isinstance(path, str) for path in args.upgrade_photo):
+            parser.error("--upgrade-photos-file must contain a list of photo paths")
 
     # Validate argument dependencies
+    if args.scan_config and (args.photo_paths or args.resume or args.retry_failed):
+        parser.error('--scan-config 不能与显式图片路径、--resume 或 --retry-failed 同时使用')
     if args.apply_recommendations and not args.compute_recommendations:
         parser.error("--apply-recommendations requires --compute-recommendations")
     if args.simulate and not args.compute_recommendations:
@@ -1939,8 +1979,18 @@ def main():
     # a conflict costs nothing. --upgrade-db is deliberately absent: it runs
     # the locked jobs below as subprocesses and would deadlock every one. Its
     # own schema DDL is locked separately, in _upgrade_db_schema.
-    if _library_job_requested(args):
+    if not args.upgrade_db and _library_job_requested(args):
         _acquire_library_lock(args, LIBRARY_JOB_RECOMPUTE)
+
+    if args.upgrade_photos_file and any((
+            args.recompute_iqa, args.recompute_saliency, args.recompute_composition_cpu,
+            args.recompute_blinks, args.recompute_eyes_expression, args.recompute_face_signals)):
+        from utils.photo_scope import photo_scope_sql
+        # 先标记综合分待刷新，阶段被中断后重跑也能补齐已提交评分的综合分。
+        scope_sql, scope_params = photo_scope_sql(args.upgrade_photo)
+        with get_connection(args.db) as conn:
+            conn.execute("UPDATE photos SET config_version = NULL WHERE 1=1" + scope_sql, scope_params)
+            conn.commit()
 
     # Category validation mode (lightweight - no GPU needed)
     if args.validate_categories:
@@ -2309,13 +2359,13 @@ def main():
     # Recompute blink detection using stored landmarks (CPU only, fast)
     if args.recompute_blinks:
         scorer = Facet(db_path=args.db, config_path=args.config, lightweight=True)
-        scorer.recompute_blink_detection()
+        scorer.recompute_blink_detection(photo_path=args.upgrade_photo)
         exit()
 
     # Recompute eyes-open + expression scores using stored landmarks (CPU only, fast)
     if args.recompute_eyes_expression:
         scorer = Facet(db_path=args.db, config_path=args.config, lightweight=True)
-        scorer.recompute_eyes_expression()
+        scorer.recompute_eyes_expression(photo_path=args.upgrade_photo)
         exit()
 
     # Backfill per-face eyes-open + smile scores using stored landmarks (CPU only, fast)
@@ -2324,15 +2374,16 @@ def main():
         scorer = Facet(db_path=args.db, config_path=args.config, lightweight=True)
         # Default is a backfill of faces missing a signal; --force rewrites all
         # of them from geometry (clobbering any stored MediaPipe blendshapes).
-        scorer.recompute_face_signals(force=args.force)
+        scorer.recompute_face_signals(force=args.force, photo_path=args.upgrade_photo)
         exit()
 
     # --upgrade-db: run the full backfill chain in dependency order by
-    # re-invoking this script with each individual flag. Subprocess isolation
-    # keeps model loads and GPU memory clean between steps. Idempotent — each
-    # underlying recompute skips rows already populated.
+    # re-invoking this script once per stage with all pending photos. Subprocess
+    # isolation keeps model memory clean between stages. Idempotent —
+    # optional critiques and incremental scoring skip previously populated data.
     if args.upgrade_db:
         import subprocess
+        from time import perf_counter
         logger.info("=" * 60)
         logger.info("Upgrading DB — running backfill chain")
         logger.info("=" * 60)
@@ -2347,38 +2398,130 @@ def main():
         else:
             logger.info("  Schema already up to date")
 
-        steps = [
+        # Cross-photo operations run once before the model stages.
+        library_steps = [
             ("--extract-gps", "GPS coordinates from EXIF"),
             ("--detect-duplicates", "Duplicate detection (pHash)"),
-            ("--recompute-iqa", "TOPIQ IAA + NR-Face + LIQE"),
-            ("--recompute-saliency", "Subject saliency (BiRefNet)"),
-            ("--recompute-composition-cpu", "Rule-based composition"),
             ("--recompute-burst", "Burst detection grouping"),
             ("--detect-sequences", "Exposure-bracket sets from stored EXIF"),
-            ("--recompute-blinks", "Blink detection from landmarks"),
-            ("--recompute-eyes-expression", "Eyes-open + expression from landmarks"),
-            ("--recompute-face-signals", "Per-face eyes/smile signals from landmarks"),
+        ]
+        photo_steps = [
+            ("--recompute-iqa", "Image quality"),
+            ("--recompute-saliency", "Subject saliency"),
+            ("--recompute-composition-cpu", "Composition"),
+            ("--recompute-blinks", "Blinks"),
+            ("--recompute-eyes-expression", "Eyes and expression"),
+            ("--recompute-face-signals", "Face signals"),
             ("--recompute-average", "Aggregate scores"),
         ]
+        upgrade_scoring_config = ScoringConfig(args.config, validate=False)
+        photo_work = _upgrade_photo_work(db_path, upgrade_scoring_config)
+        if args.generate_critiques:
+            photo_steps.append(("--generate-critiques", "Critiques and suggestions"))
+        else:
+            logger.info("Skipping photo critiques and personalized suggestions; use --generate-critiques LANG to initialize them.")
         cmd_base = [sys.executable, os.path.abspath(__file__)]
         if args.db:
             cmd_base += ["--db", args.db]
         if args.config:
             cmd_base += ["--config", args.config]
         failures = []
-        for flag, label in steps:
-            logger.info("--- %s ---", label)
-            result = subprocess.run(cmd_base + [flag])
+
+        quiet = args.quiet
+        from contextlib import nullcontext
+        from processing.upgrade_progress import PROGRESS_ENV, UpgradeProgressMonitor
+        detail_log = None
+        if quiet:
+            import tempfile
+            detail_log = tempfile.NamedTemporaryFile(
+                mode='w+', prefix='facet-upgrade-', suffix='.log', delete=False,
+            )
+            print(f"Detailed log: {detail_log.name}", file=sys.stderr, flush=True)
+        progress = None
+
+        def run_step(flag, label, scope_file=None, photo_total=0):
+            if progress is not None:
+                progress.set_description(f"Overall stage progress · {label}")
+            if not quiet:
+                logger.info("--- %s ---", label)
+            step_args = [flag]
+            if flag == '--generate-critiques':
+                step_args.append(args.generate_critiques)
+            if scope_file is not None:
+                step_args += ['--upgrade-photos-file', scope_file]
+            step_started = perf_counter()
+            run_kwargs = {}
+            monitor = nullcontext()
+            if scope_file is not None:
+                progress_path = scope_file + '.progress'
+                run_kwargs['env'] = dict(os.environ, **{PROGRESS_ENV: progress_path})
+                monitor = UpgradeProgressMonitor(progress_path, photo_total, label)
+            if detail_log is not None:
+                detail_log.write(f"\n--- {label}: {scope_file or 'library'} ---\n")
+                detail_log.flush()
+                run_kwargs.update(stdout=detail_log, stderr=subprocess.STDOUT)
+            with monitor:
+                result = subprocess.run(cmd_base + step_args, **run_kwargs)
+            elapsed = perf_counter() - step_started
+            timing = f"Step timing: {label}, {elapsed:.2f} seconds"
+            if detail_log is not None:
+                detail_log.write(timing + "\n")
+                detail_log.flush()
+            else:
+                logger.info(timing)
             if result.returncode != 0:
-                logger.warning("Step %s exited with code %d; continuing", flag, result.returncode)
+                logger.error("Step %s failed for %s (exit=%d)", flag, scope_file or 'library', result.returncode)
                 failures.append((flag, result.returncode))
+                if flag == '--recompute-saliency' and result.returncode == 3:
+                    logger.error("Saliency dependencies unavailable; this model stage cannot run. See the detailed log.")
+                return False
+            return True
+
+        for flag, label in library_steps:
+            run_step(flag, label)
+        for flag, label in photo_steps:
+            if flag in photo_work:
+                logger.info("Pending backfill: %s, %d photos", label, len(photo_work[flag]))
+        with get_connection(db_path) as conn:
+            paths = [row['path'] for row in conn.execute("SELECT path FROM photos ORDER BY path").fetchall()]
+        import tempfile
+        changed_paths = set()
+        skipped = 0
+        # 每个阶段一个子进程，模型在整批照片完成后才释放。
+        # 文件传递范围，避免大量路径超过命令行长度限制。
+        with tempfile.TemporaryDirectory(prefix='facet-upgrade-') as scope_dir:
+            with tqdm(total=len(photo_steps), desc="Overall stage progress", unit="stage", dynamic_ncols=True) as progress:
+                for index, (flag, label) in enumerate(photo_steps):
+                    pending = set(photo_work.get(flag, paths))
+                    if flag == '--recompute-average':
+                        pending.update(changed_paths)
+                    skipped += len(paths) - len(pending)
+                    if pending:
+                        scope_path = os.path.join(scope_dir, f'{index}.json')
+                        with open(scope_path, 'w', encoding='utf-8') as scope_file:
+                            json.dump(sorted(pending), scope_file)
+                        run_step(flag, label, scope_path, len(pending))
+                        # 阶段失败前可能已提交部分结果，仍刷新这些照片的综合分。
+                        if flag not in ('--generate-critiques', '--recompute-average'):
+                            changed_paths.update(pending)
+                    progress.update(1)
+                    progress.set_postfix(failed_steps=len(failures))
+        progress = None
+        logger.info("Skipped %d scoring steps with existing results or inapplicable inputs.", skipped)
+        # Refresh score-dependent group representatives after all scores changed.
+        for flag in ('--recompute-burst', '--detect-sequences'):
+            run_step(flag, flag)
+        if detail_log is not None:
+            detail_log.close()
+            print(f"Finished: {len(photo_steps)}/{len(photo_steps)} stages, {len(paths)} photos, {len(failures)} failed steps; Detailed log: {detail_log.name}",
+                  file=sys.stderr, flush=True)
         logger.info("=" * 60)
         if failures:
             logger.warning("Upgrade complete with %d failed step(s):", len(failures))
             for flag, code in failures:
                 logger.warning("  %s exit=%d", flag, code)
         else:
-            logger.info("Upgrade complete — all %d steps succeeded.", len(steps))
+            logger.info("Upgrade complete — %d photos processed.", len(paths))
         logger.info("Captions and VLM tags are NOT part of --upgrade-db (heavy).")
         logger.info("Run them explicitly with --generate-captions / --recompute-tags-vlm if desired.")
         sys.exit(1 if failures else 0)
@@ -2395,7 +2538,7 @@ def main():
     # Recompute composition scores using rule-based analysis (CPU only)
     if args.recompute_composition_cpu:
         scorer = Facet(db_path=args.db, config_path=args.config, lightweight=True)
-        scorer.recompute_composition_scores()
+        scorer.recompute_composition_scores(photo_path=args.upgrade_photo)
         exit()
 
     # Recompute composition with SAMP-Net (requires GPU)
@@ -2408,6 +2551,11 @@ def main():
 
     # Recompute saliency metrics using BiRefNet from stored thumbnails (requires GPU)
     if args.recompute_saliency:
+        from models.saliency_compat import needs_compat_worker, compat_available
+        if needs_compat_worker() and not compat_available():
+            logger.error("Saliency scoring unavailable: transformers cannot use the current PyTorch version. "
+                         "Run venv/bin/python scripts/install_saliency_compat.py to install isolated compatible dependencies; this step is incomplete.")
+            sys.exit(3)
         import io
         import numpy as np
         import cv2
@@ -2428,12 +2576,16 @@ def main():
         # Source stored thumbnails, not originals: the recompute must work with
         # the library volume offline, and the API saliency overlay already
         # derives its mask from the same 640px thumbnail.
+        from utils.photo_scope import photo_scope_sql
+
         where = "thumbnail IS NOT NULL"
         if not args.force:
-            where += " AND subject_bbox IS NULL"
+            where += " AND subject_bbox IS NULL AND subject_sharpness IS NULL"
         with get_connection(args.db) as conn:
             paths = [row['path'] for row in conn.execute(
                 f"SELECT path FROM photos WHERE {where}"
+                + photo_scope_sql(args.upgrade_photo)[0],
+                photo_scope_sql(args.upgrade_photo)[1]
             ).fetchall()]
 
         if not paths:
@@ -2444,6 +2596,9 @@ def main():
         logger.info("Recomputing saliency for %d photos from stored thumbnails...", len(paths))
 
         batch_size = config.get_processing_settings().get('gpu_batch_size', 16)
+        # 中央处理器逐张计算，避免大批量激活占用内存；每批立即保存和汇报进度。
+        batch_size = (1 if scorer_model.device == 'cpu'
+                      else scorer_model._affordable_batch_size(batch_size))
         updated = 0
 
         def _flush_saliency_batch(conn, batch_paths, batch_pil, batch_cv):
@@ -2461,35 +2616,37 @@ def main():
                 )
             return len(batch_paths)
 
-        # Fetch each thumbnail BLOB on demand (a fetchall would hold the whole
-        # library's thumbnails in RAM) and commit in RECOMPUTE_COMMIT_BATCH steps.
+        # 按需读取缩略图，每个推理批次提交，避免中断后重算数百张。
         with get_connection(args.db) as read_conn, get_connection(args.db) as conn:
             batch_paths, batch_pil, batch_cv = [], [], []
-            pending = 0
-            for path in tqdm(paths, desc="Saliency"):
-                row = read_conn.execute(
-                    "SELECT thumbnail FROM photos WHERE path = ?", (path,)
-                ).fetchone()
-                blob = row['thumbnail'] if row else None
-                if not blob:
-                    continue
-                try:
-                    pil_img = Image.open(io.BytesIO(blob)).convert('RGB')
-                except Exception:
-                    continue
-                batch_paths.append(path)
-                batch_pil.append(pil_img)
-                batch_cv.append(cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR))
-                if len(batch_paths) >= batch_size:
-                    updated += _flush_saliency_batch(conn, batch_paths, batch_pil, batch_cv)
-                    pending += len(batch_paths)
-                    batch_paths, batch_pil, batch_cv = [], [], []
-                    if pending >= RECOMPUTE_COMMIT_BATCH:
+            from processing.upgrade_progress import PhotoProgress
+            with PhotoProgress(total=len(paths), desc="Saliency") as progress:
+                for path in paths:
+                    row = read_conn.execute(
+                        "SELECT thumbnail FROM photos WHERE path = ?", (path,)
+                    ).fetchone()
+                    blob = row['thumbnail'] if row else None
+                    if not blob:
+                        progress.update()
+                        continue
+                    try:
+                        pil_img = Image.open(io.BytesIO(blob)).convert('RGB')
+                    except Exception:
+                        progress.update()
+                        continue
+                    batch_paths.append(path)
+                    batch_pil.append(pil_img)
+                    batch_cv.append(cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR))
+                    if len(batch_paths) >= batch_size:
+                        updated += _flush_saliency_batch(conn, batch_paths, batch_pil, batch_cv)
                         conn.commit()
-                        pending = 0
-            if batch_paths:
-                updated += _flush_saliency_batch(conn, batch_paths, batch_pil, batch_cv)
-            conn.commit()
+                        progress.update(len(batch_paths))
+                        batch_paths, batch_pil, batch_cv = [], [], []
+                if batch_paths:
+                    updated += _flush_saliency_batch(conn, batch_paths, batch_pil, batch_cv)
+                    conn.commit()
+                    progress.update(len(batch_paths))
+                conn.commit()
 
         scorer_model.unload()
         logger.info("Recomputed saliency for %d photos.", updated)
@@ -2571,7 +2728,9 @@ def main():
     if args.recompute_iqa:
         from processing.scorer import Facet
         facet = Facet(db_path=args.db, config_path=args.config, lightweight=True)
-        facet.recompute_iqa_from_thumbnails()
+        facet.recompute_iqa_from_thumbnails(
+            photo_path=args.upgrade_photo, sequential_models=bool(args.upgrade_photos_file),
+        )
         exit()
 
     # Shared scaffolding for the per-facet thumbnail recompute passes below
@@ -2847,6 +3006,7 @@ def main():
                 args.db,
                 config,
                 args.generate_critiques,
+                photo_path=args.upgrade_photo,
             )
         except CritiqueBatchError as ex:
             logger.error("AI critique initialization failed: %s", ex)
@@ -3381,13 +3541,14 @@ def main():
             use_embeddings=True,
             normalizer=normalizer,
             category_filter=args.recompute_category,
+            photo_path=args.upgrade_photo,
         )
         if normalizer is not None:
             with get_connection(scorer.db_path, row_factory=False) as conn:
                 normalizer.save_to_stats_cache(conn)
                 conn.commit()
             logger.info("Persisted percentile snapshot for drift tracking")
-        if not args.recompute_category:
+        if not args.recompute_category and not args.upgrade_photo:
             process_bursts(scorer.db_path, scorer.config.config_path)
             detect_all_sequences(scorer.db_path, scorer.config.config_path,
                                  incremental=True)
@@ -3614,6 +3775,16 @@ def main():
 
         logger.info("Exported %d photos to manifest %s", len(photos), output_file)
         exit()
+
+    if args.scan_config:
+        from config_resolve import load_resolved
+        config_path = resolve_scoring_config_path(args.config)
+        directories = load_resolved(config_path).get('viewer', {}).get('scan_directories', [])
+        if (not isinstance(directories, list) or not directories
+                or not all(isinstance(path, str) and path.strip() for path in directories)):
+            parser.error('--scan-config 需要在配置的 viewer.scan_directories 中填写非空目录列表')
+        args.photo_paths = list(dict.fromkeys(directories))
+        logger.info('从配置读取 %d 个扫描目录：%s', len(args.photo_paths), config_path)
 
     # --resume reuses the directories recorded by the last interrupted run;
     # --retry-failed needs no directories at all (worklist comes from the DB)

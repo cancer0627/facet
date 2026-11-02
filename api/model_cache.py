@@ -127,8 +127,7 @@ def translate_text(text, target_lang):
 def get_or_load_saliency_scorer():
     """Get or lazily load the BiRefNet saliency scorer singleton for the API.
 
-    Loaded once and reused across requests (the overlay endpoint runs it on the
-    stored 640px thumbnail, so per-request cost is trivial once the model is in).
+    按评分配置加载一次并复用，主体覆盖图与批量评分使用相同分辨率。
     """
     global _saliency_scorer
     if _saliency_scorer is not None:
@@ -139,8 +138,14 @@ def get_or_load_saliency_scorer():
             return _saliency_scorer
 
         from models.saliency_scorer import SaliencyScorer
+        from api.config import _FULL_CONFIG
 
-        scorer = SaliencyScorer()
+        settings = _FULL_CONFIG.get('models', {}).get('saliency', {})
+        scorer = SaliencyScorer(
+            model_name=settings.get('model'), resolution=settings.get('resolution'),
+            mask_threshold=settings.get('mask_threshold'),
+            min_subject_pixels=settings.get('min_subject_pixels'),
+        )
         scorer.load()
         _saliency_scorer = scorer
         logger.info("Saliency scorer loaded and cached for API use")
@@ -173,7 +178,7 @@ def get_or_load_vlm_tagger(vlm_config):
         backend = create_vlm_backend(_FULL_CONFIG)
         if backend is not None:
             _vlm_tagger = VLMTagger({}, backend=backend)
-            logger.info("Remote VLM backend attached and cached for API use")
+            logger.info("Configured VLM backend attached and cached for API use")
             return _vlm_tagger
 
         tagger = VLMTagger(vlm_config)
@@ -181,6 +186,17 @@ def get_or_load_vlm_tagger(vlm_config):
         _vlm_tagger = tagger
         logger.info("VLM tagger loaded and cached for API use")
         return _vlm_tagger
+
+
+def unload_vlm_tagger():
+    """Release the process-local model when the viewer shuts down."""
+    global _vlm_tagger
+    with vlm_generate_lock, _vlm_lock:
+        if _vlm_tagger is not None:
+            try:
+                _vlm_tagger.unload()
+            finally:
+                _vlm_tagger = None
 
 
 def get_or_load_caption_translator(target_lang):

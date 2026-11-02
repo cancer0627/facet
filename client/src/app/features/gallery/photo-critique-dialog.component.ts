@@ -1,4 +1,4 @@
-import { Component, Pipe, PipeTransform, inject, signal, computed, OnInit } from '@angular/core';
+import { Component, Pipe, PipeTransform, inject, signal, computed, effect, untracked, OnInit, OnDestroy } from '@angular/core';
 import { DecimalPipe, PercentPipe } from '@angular/common';
 import { MatDialogModule, MAT_DIALOG_DATA } from '@angular/material/dialog';
 import { MatButtonModule } from '@angular/material/button';
@@ -442,7 +442,7 @@ export class DistortionLabelPipe implements PipeTransform {
     </mat-dialog-content>
   `,
 })
-export class PhotoCritiqueDialogComponent implements OnInit {
+export class PhotoCritiqueDialogComponent implements OnInit, OnDestroy {
   protected readonly I18N = I18N_KEYS;
   private readonly api = inject(ApiService);
   private readonly auth = inject(AuthService);
@@ -515,43 +515,98 @@ export class PhotoCritiqueDialogComponent implements OnInit {
     }
   }
 
+  private activeLocale: string | null = null;
+  private critiqueRequest = 0;
+  private personalizedRequest = 0;
+
+  constructor() {
+    effect(() => {
+      const lang = this.i18n.locale();
+      untracked(() => {
+        if (this.activeLocale !== null && this.activeLocale !== lang) {
+          void this.ngOnInit();
+        }
+      });
+    });
+  }
+
+  ngOnDestroy(): void {
+    this.activeLocale = null;
+    ++this.critiqueRequest;
+    ++this.personalizedRequest;
+  }
+
   async ngOnInit(): Promise<void> {
-    void this.loadPersonalizedSuggestions();
+    this.activeLocale = this.i18n.locale();
+    ++this.personalizedRequest;
+    this.critique.set(null);
+    this.personalizedSuggestions.set(null);
+    this.personalizedLoading.set(true);
+    this.personalizedError.set(null);
+    this.error.set(null);
+    this.loading.set(true);
+    this.vlmRefreshing.set(false);
+    if (this.data.vlmAvailable) {
+      await this.loadCritique(false, true);
+    } else {
+      void this.loadPersonalizedSuggestions();
+      await this.loadCritique();
+    }
+  }
+
+  private async loadCritique(refresh = false, progressive = false): Promise<void> {
+    const lang = this.i18n.locale();
+    const request = ++this.critiqueRequest;
+    const current = () => request === this.critiqueRequest && lang === this.i18n.locale();
     try {
-      const mode = this.data.vlmAvailable ? 'vlm' : 'rule';
-      const res = await firstValueFrom(
-        this.api.get<CritiqueResponse>('/critique', {
-          path: this.data.photoPath, mode, lang: this.i18n.locale(),
-        }),
-      );
-      this.critique.set(res);
+      if (progressive) {
+        const rules = await firstValueFrom(this.api.get<CritiqueResponse>('/critique', {
+          path: this.data.photoPath, mode: 'rule', lang,
+        }));
+        if (!current()) return;
+        this.critique.set(rules);
+        this.loading.set(false);
+        this.vlmRefreshing.set(true);
+      }
+      const mode = progressive ? 'combined' : refresh || this.data.vlmAvailable ? 'vlm' : 'rule';
+      const params: Record<string, string> = { path: this.data.photoPath, mode, lang };
+      if (refresh) params['refresh'] = 'true';
+      const res = await firstValueFrom(this.api.get<CritiqueResponse>('/critique', params));
+      if (current()) this.critique.set(res);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : this.i18n.t(I18N.critique.error_fallback);
-      this.error.set(message);
+      if (current() && !refresh && !this.critique()) {
+        const message = err instanceof Error ? err.message : this.i18n.t(I18N.critique.error_fallback);
+        this.error.set(message);
+      }
     } finally {
-      this.loading.set(false);
+      if (current()) {
+        this.loading.set(false);
+        this.vlmRefreshing.set(false);
+        if (progressive) void this.loadPersonalizedSuggestions();
+      }
     }
   }
 
   private async loadPersonalizedSuggestions(refresh = false): Promise<void> {
-    if (refresh) {
-      if (this.personalizedLoading() || this.personalizedRefreshing()) return;
-      this.personalizedRefreshing.set(true);
-    } else {
-      this.personalizedLoading.set(true);
-    }
-
+    if (refresh && (this.personalizedLoading() || this.personalizedRefreshing())) return;
+    const lang = this.i18n.locale();
+    const request = ++this.personalizedRequest;
+    const current = () => request === this.personalizedRequest && lang === this.i18n.locale();
+    this.personalizedRefreshing.set(refresh);
+    this.personalizedLoading.set(!refresh);
     try {
       const res = await firstValueFrom(
         this.api.get<PersonalizedSuggestionsResponse>('/personalized_suggestions', {
           path: this.data.photoPath,
-          lang: this.i18n.locale(),
+          lang,
           refresh: refresh ? 'true' : 'false',
         }).pipe(timeout(PERSONALIZED_REQUEST_TIMEOUT_MS)),
       );
+      if (!current()) return;
       this.personalizedSuggestions.set(res);
       this.personalizedError.set(null);
     } catch {
+      if (!current()) return;
       if (this.personalizedSuggestions()) {
         this.snack.open(
           this.i18n.t(I18N.critique.personalized_refresh_failed),
@@ -562,8 +617,10 @@ export class PhotoCritiqueDialogComponent implements OnInit {
         this.personalizedError.set(this.i18n.t(I18N.critique.personalized_unavailable));
       }
     } finally {
-      this.personalizedLoading.set(false);
-      this.personalizedRefreshing.set(false);
+      if (current()) {
+        this.personalizedLoading.set(false);
+        this.personalizedRefreshing.set(false);
+      }
     }
   }
 
@@ -574,17 +631,6 @@ export class PhotoCritiqueDialogComponent implements OnInit {
   protected async refreshVlm(): Promise<void> {
     if (this.vlmRefreshing()) return;
     this.vlmRefreshing.set(true);
-    try {
-      const res = await firstValueFrom(
-        this.api.get<CritiqueResponse>('/critique', {
-          path: this.data.photoPath, mode: 'vlm', lang: this.i18n.locale(), refresh: 'true',
-        }),
-      );
-      this.critique.set(res);
-    } catch {
-      // Keep the previous critique visible when regeneration fails.
-    } finally {
-      this.vlmRefreshing.set(false);
-    }
+    await this.loadCritique(true);
   }
 }

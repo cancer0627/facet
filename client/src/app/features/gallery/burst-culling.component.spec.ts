@@ -3,6 +3,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { Subject, of, throwError } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { ActivatedRoute, provideRouter } from '@angular/router';
 import { ApiService } from '../../core/services/api.service';
@@ -374,6 +375,35 @@ describe('BurstCullingComponent', () => {
         keep_paths: ['/photo1.jpg'],
       });
       expect(component['visibleGroups']().find(g => g.group_id === 1)).toBeUndefined();
+    });
+
+    it.each([
+      [0, null, 'culling.confirm_error.network'],
+      [401, null, 'culling.confirm_error.auth'],
+      [403, null, 'culling.confirm_error.forbidden'],
+      [404, { detail: 'Burst group not found' }, 'culling.confirm_error.group_changed'],
+      [400, { detail: 'Paths not in burst group: [photo]' }, 'culling.confirm_error.group_changed'],
+      [422, { detail: [{ msg: 'Invalid input' }] }, 'culling.confirm_error.invalid'],
+      [429, null, 'culling.confirm_error.rate_limited'],
+      [500, { detail: 'Internal server error' }, 'culling.confirm_error.server'],
+      [500, { detail: { code: 'database_busy', message: 'busy' } }, 'culling.confirm_error.database_busy'],
+      [500, { detail: { code: 'database_readonly' } }, 'culling.confirm_error.database_readonly'],
+      [500, { detail: { code: 'database_full' } }, 'culling.confirm_error.database_full'],
+    ])('keeps a persistent reason for status %s and restores the failed group', async (status, error, key) => {
+      mockApi.post.mockReturnValue(throwError(() => new HttpErrorResponse({ status, error })));
+      const group = component['groups']()[0];
+      component['confirmGroup'](group);
+      await vi.advanceTimersByTimeAsync(7000);
+
+      expect(component['confirmationError']()).toContain(key);
+      expect(component['confirmedGroups']().has('1_burst')).toBe(false);
+      expect(component['visibleGroups']().some(g => g.group_id === 1)).toBe(true);
+      if (status) expect(mockI18n.t).toHaveBeenCalledWith('culling.confirm_error.status', { status });
+      if (typeof error?.detail === 'string' && error.detail !== 'Internal server error') {
+        expect(mockI18n.t).toHaveBeenCalledWith('culling.confirm_error.server_detail', { detail: error.detail });
+      }
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(component['confirmationError']()).toContain(key);
     });
 
     it('does nothing when no photos are selected', () => {
@@ -1369,6 +1399,16 @@ describe('BurstCullingComponent', () => {
       expect(mockApi.post).toHaveBeenCalledWith('/culling-groups/confirm', expect.objectContaining({
         group_id: 2,
       }));
+    });
+
+    it('shows the server reason when confirming all fails', async () => {
+      mockApi.post.mockReturnValue(throwError(() => new HttpErrorResponse({
+        status: 500, error: { detail: { code: 'database_busy' } },
+      })));
+      await component['confirmAllRemaining']();
+      expect(component['confirmationError']()).toContain('culling.confirm_error.database_busy');
+      expect(component['confirming']()).toBe(false);
+      expect(component['confirmedGroups']().size).toBe(0);
     });
 
     it('should set confirming false after completion', async () => {
@@ -2902,6 +2942,20 @@ describe('BurstCullingComponent swipe-to-decide (rendered, touch)', () => {
     component['lightboxIndex'].set(0);
     fixture.detectChanges();
   };
+
+  it('renders a dismissible error in the list and inside the darkroom without closing it', () => {
+    component['confirmationError'].set('数据库正忙，请稍后重试。');
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[role="alert"]').textContent).toContain('数据库正忙');
+    openDarkroom();
+    const dialog = fixture.nativeElement.querySelector('[role="dialog"]');
+    const alert = dialog.querySelector('[role="alert"]');
+    expect(alert.textContent).toContain('数据库正忙');
+    alert.querySelector('button').click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[role="alert"]')).toBeNull();
+    expect(component['lightboxGroup']()).not.toBeNull();
+  });
 
   const surface = () => fixture.debugElement.query(By.directive(SwipeDecisionDirective));
 

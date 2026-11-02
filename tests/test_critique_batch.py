@@ -10,6 +10,7 @@ import pytest
 from PIL import Image
 
 import processing.critique_batch as critique_batch
+from i18n import SUPPORTED_LANGUAGES
 from config import ScoringConfig
 from db import init_database
 from models.vlm_backend import VLMBackendError
@@ -40,6 +41,12 @@ class FakeTagger:
 
     def generate(self, image, prompt, max_new_tokens):
         self.prompts.append((prompt, max_new_tokens))
+        if 'five string fields: critique' in prompt:
+            try:
+                payload = json.loads(self.personalized_response)
+            except ValueError:
+                payload = {}
+            return json.dumps({**payload, 'critique': self.critique_response}, ensure_ascii=False)
         if 'aggregate_action' in prompt:
             return self.personalized_response
         return self.critique_response
@@ -77,7 +84,10 @@ def _thumbnail():
 
 @pytest.fixture()
 def scoring_config():
-    return ScoringConfig(validate=False)
+    config = ScoringConfig(validate=False)
+    # Use another backend for generic tests so local configuration cannot affect combined generation.
+    config.config['vlm_backend']['type'] = 'local'
+    return config
 
 
 @pytest.fixture()
@@ -121,7 +131,7 @@ def test_initializes_both_caches_and_rerun_skips(critique_db, scoring_config):
     assert first.critiques_generated == 1
     assert first.suggestions_generated == 1
     assert first.incomplete == 0
-    assert len(tagger.prompts) == 2
+    assert len(tagger.prompts) == 1
     row = _cached_row(critique_db)
     assert row['vlm_critique_language'] == 'zh'
     payload = json.loads(row['personalized_suggestions'])
@@ -139,6 +149,40 @@ def test_initializes_both_caches_and_rerun_skips(critique_db, scoring_config):
     assert rerun_tagger.prompts == []
 
 
+@pytest.mark.parametrize('lang', SUPPORTED_LANGUAGES)
+def test_language_change_replaces_both_caches(critique_db, scoring_config, lang):
+    previous = 'zh' if lang != 'zh' else 'en'
+    initialize_critiques(critique_db, scoring_config, previous, tagger=FakeTagger())
+    tagger = FakeTagger()
+    summary = initialize_critiques(critique_db, scoring_config, lang, tagger=tagger)
+    assert summary.critiques_generated == summary.suggestions_generated == 1
+    assert f'({lang})' in tagger.prompts[0][0]
+    row = _cached_row(critique_db)
+    assert row['vlm_critique_language'] == lang
+    assert json.loads(row['personalized_suggestions'])['lang'] == lang
+
+
+@pytest.mark.parametrize('lang', SUPPORTED_LANGUAGES)
+def test_critique_prompt_keeps_english_instructions_and_requested_output_language(lang):
+    from api.routers.critique import _build_vlm_prompt
+
+    prompt = _build_vlm_prompt({}, {}, lang, full_config={})
+    assert all(f'{title}:' in prompt for title in ('Observation', 'Assessment', 'Suggestions'))
+    assert not any('\u4e00' <= char <= '\u9fff' for char in prompt)
+    assert f'({lang})' in prompt
+    assert 'including the section headings' in prompt
+
+
+@pytest.mark.parametrize('lang', SUPPORTED_LANGUAGES)
+def test_suggestion_prompt_has_no_chinese_example_bias(lang):
+    from api.routers.critique import _build_personalized_prompt
+
+    prompt = _build_personalized_prompt({}, {}, lang, full_config={})
+    assert not any('\u4e00' <= char <= '\u9fff' for char in prompt)
+    assert 'Write all four values entirely in' in prompt
+    assert f'({lang})' in prompt
+
+
 def test_command_owned_tagger_is_loaded_once_and_unloaded(
         critique_db, scoring_config, monkeypatch):
     tagger = FakeTagger()
@@ -149,7 +193,7 @@ def test_command_owned_tagger_is_loaded_once_and_unloaded(
     assert summary.initialized == 1
     assert tagger.load_calls == 1
     assert tagger.unload_calls == 1
-    assert len(tagger.prompts) == 2
+    assert len(tagger.prompts) == 1
 
 
 def test_score_change_regenerates_only_personalized_cache(critique_db, scoring_config):
@@ -217,7 +261,7 @@ def test_score_equal_to_five_does_not_skip_ai_generation(
     assert summary.incomplete == 0
     assert summary.critiques_generated == 1
     assert summary.suggestions_generated == 1
-    assert len(tagger.prompts) == 2
+    assert len(tagger.prompts) == 1
 
 
 def test_language_change_regenerates_both_caches(critique_db, scoring_config):
@@ -233,7 +277,7 @@ def test_language_change_regenerates_both_caches(critique_db, scoring_config):
     assert summary.initialized == 1
     assert summary.critiques_generated == 1
     assert summary.suggestions_generated == 1
-    assert len(tagger.prompts) == 2
+    assert len(tagger.prompts) == 1
     assert _cached_row(critique_db)['vlm_critique_language'] == 'zh'
 
 
@@ -306,3 +350,70 @@ def test_viewer_write_during_inference_does_not_lock_batch(
     assert summary.failed == 0
     assert summary.critiques_generated == 101
     assert summary.suggestions_generated == 101
+
+
+@pytest.mark.parametrize('scope', ['/photos/b.jpg', ['/photos/b.jpg']])
+def test_single_photo_scope_leaves_other_cache_untouched(critique_db, scoring_config, scope):
+    with sqlite3.connect(critique_db) as conn:
+        conn.execute("INSERT INTO photos (path, filename, aggregate, vcg_submission_score, thumbnail) "
+                     "SELECT '/photos/b.jpg', 'b.jpg', aggregate, vcg_submission_score, thumbnail "
+                     "FROM photos WHERE path = '/photos/a.jpg'")
+    summary = initialize_critiques(
+        critique_db, scoring_config, 'zh', tagger=FakeTagger(), photo_path=scope,
+    )
+    assert summary.total == summary.initialized == 1
+    assert _cached_row(critique_db)['vlm_critique'] is None
+    with sqlite3.connect(critique_db) as conn:
+        assert conn.execute("SELECT vlm_critique FROM photos WHERE path = '/photos/b.jpg'").fetchone()[0]
+
+
+def test_invalid_combined_output_falls_back_to_separate_generation(critique_db, scoring_config):
+    class InvalidCombinedTagger(FakeTagger):
+        def generate(self, image, prompt, max_new_tokens):
+            if 'five string fields: critique' in prompt:
+                self.prompts.append((prompt, max_new_tokens))
+                return 'invalid json'
+            return super().generate(image, prompt, max_new_tokens)
+
+    tagger = InvalidCombinedTagger()
+    summary = initialize_critiques(critique_db, scoring_config, 'zh', tagger=tagger)
+    assert summary.initialized == 1
+    assert len(tagger.prompts) == 3
+    row = _cached_row(critique_db)
+    assert row['vlm_critique'] == tagger.critique_response
+    assert json.loads(row['personalized_suggestions'])['lang'] == 'zh'
+
+
+def test_llama_cpp_skips_combined_attempt_and_reuses_caches(critique_db, scoring_config):
+    scoring_config.config['vlm_backend']['type'] = 'llama_cpp'
+    tagger = FakeTagger()
+    summary = initialize_critiques(critique_db, scoring_config, 'zh', tagger=tagger)
+    assert summary.initialized == 1
+    assert len(tagger.prompts) == 2
+    assert all('five string fields: critique' not in prompt for prompt, _ in tagger.prompts)
+    assert 'aggregate_action' not in tagger.prompts[0][0]
+    assert 'aggregate_action' in tagger.prompts[1][0]
+    assert tagger.prompts[0][1] == scoring_config.config['critique']['vlm']['max_new_tokens']
+    rerun = FakeTagger()
+    assert initialize_critiques(critique_db, scoring_config, 'zh', tagger=rerun).skipped == 1
+    assert rerun.prompts == []
+
+    # Score changes only invalidate the suggestion cache, preserving the existing full critique.
+    with sqlite3.connect(critique_db) as conn:
+        conn.execute("UPDATE photos SET aggregate = 8.0 WHERE path = '/photos/a.jpg'")
+    only_suggestions = FakeTagger()
+    summary = initialize_critiques(critique_db, scoring_config, 'zh', tagger=only_suggestions)
+    assert summary.critiques_generated == 0
+    assert summary.suggestions_generated == 1
+    assert len(only_suggestions.prompts) == 1
+    assert 'aggregate_action' in only_suggestions.prompts[0][0]
+
+    # Do not regenerate existing suggestions when only the full critique is missing.
+    with sqlite3.connect(critique_db) as conn:
+        conn.execute("UPDATE photos SET vlm_critique = NULL WHERE path = '/photos/a.jpg'")
+    only_critique = FakeTagger()
+    summary = initialize_critiques(critique_db, scoring_config, 'zh', tagger=only_critique)
+    assert summary.critiques_generated == 1
+    assert summary.suggestions_generated == 0
+    assert len(only_critique.prompts) == 1
+    assert 'aggregate_action' not in only_critique.prompts[0][0]

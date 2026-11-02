@@ -1413,3 +1413,42 @@ class TestPanoramaGroupsCarryTheOverride:
         conn = self._db([(f'/p{i}.jpg', 'hdr_panorama', '/p0.jpg') for i in range(3)])
         photos = self._fetch(conn)[0]['photos']
         assert {p['sequence_override'] for p in photos} == {'hdr_panorama'}
+
+
+class TestCullingFailureDetails:
+    @pytest.mark.parametrize('group_type', ['burst', 'similar', 'scene', 'panorama'])
+    def test_database_lock_has_public_reason_and_log(self, edition_client, group_type, caplog):
+        with mock.patch('api.routers.burst_culling._keep_whole_kind_for', return_value=None), \
+             mock.patch('api.routers.burst_culling.get_db', side_effect=sqlite3.OperationalError('database is locked')), \
+             mock.patch('api.routers.scenes.get_db', side_effect=sqlite3.OperationalError('database is locked')):
+            response = edition_client.post('/api/culling-groups/confirm', json={
+                'group_id': 1, 'type': group_type, 'paths': ['/photo.jpg'], 'keep_paths': ['/photo.jpg'],
+            })
+        assert response.status_code == 500
+        assert response.json()['detail']['code'] == 'database_busy'
+        assert 'Failed to confirm culling group' in caplog.text or 'Failed to select' in caplog.text or 'Failed to confirm scene' in caplog.text
+
+    @pytest.mark.parametrize('code,expected', [
+        (sqlite3.SQLITE_BUSY, 'database_busy'),
+        (sqlite3.SQLITE_LOCKED, 'database_busy'),
+        (sqlite3.SQLITE_READONLY, 'database_readonly'),
+        (sqlite3.SQLITE_FULL, 'database_full'),
+        (sqlite3.SQLITE_CORRUPT, 'database_error'),
+    ])
+    def test_database_details_do_not_expose_exception_text(self, code, expected):
+        from api.db_helpers import culling_database_error_detail
+        exc = sqlite3.OperationalError('private/path/photo.db')
+        exc.sqlite_errorcode = code
+        detail = culling_database_error_detail(exc)
+        assert detail['code'] == expected
+        assert 'private/path' not in str(detail)
+
+    def test_group_validation_failure_is_logged(self, edition_client, caplog):
+        from fastapi import HTTPException
+        with mock.patch('api.routers.burst_culling._keep_whole_kind_for', return_value=None), \
+             mock.patch('api.routers.burst_culling.select_burst_photos', side_effect=HTTPException(404, 'Burst group not found')):
+            response = edition_client.post('/api/culling-groups/confirm', json={
+                'group_id': 1, 'type': 'burst', 'paths': ['/photo.jpg'], 'keep_paths': ['/photo.jpg'],
+            })
+        assert response.status_code == 404
+        assert 'status=404 reason=Burst group not found' in caplog.text

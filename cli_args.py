@@ -3,6 +3,7 @@
 import argparse
 
 from db import DEFAULT_DB_PATH
+from i18n import SUPPORTED_LANGUAGES
 
 # Refreshing thumbnails is bound by storage round-trips, not by CPU: each file
 # is a small read at the far end of whatever mount the library lives on. The
@@ -23,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog='''
 Examples:
   python facet.py /path/to/photos              # Score photos (auto multi-pass mode)
+  python facet.py --scan-config                # 扫描 viewer.scan_directories 中的目录
   python facet.py /path/to/photos --single-pass  # Force single-pass (all models at once)
   python facet.py /path/to/photos --force      # Re-scan already processed files
   python facet.py --recompute-average          # Recalculate scores with current config
@@ -77,6 +79,8 @@ Configuration:
 
     # Scanning options
     scan_group = parser.add_argument_group('Scanning options')
+    scan_group.add_argument('--scan-config', action='store_true',
+                        help='扫描配置中 viewer.scan_directories 指定的目录，默认跳过已处理图片')
     scan_group.add_argument('--force', action='store_true',
                         help='Re-scan already processed files (ignores existing DB entries)')
     scan_group.add_argument('--single-pass', action='store_true',
@@ -199,11 +203,18 @@ Configuration:
     db_group.add_argument('--recompute-skin-tone', action='store_true',
                         help='Skin-tone naturalness from stored face thumbnails + landmarks '
                              '(cheek CIELAB vs skin locus, CIEDE2000; CPU, no model)')
+    db_group.add_argument('--upgrade-photo', help=argparse.SUPPRESS)
+    db_group.add_argument('--upgrade-photos-file', help=argparse.SUPPRESS)
+    db_group.add_argument('--quiet', action='store_true',
+                        help='With --upgrade-db, show stage and photo progress and write detailed output '
+                             'to a temporary log file')
     db_group.add_argument('--upgrade-db', action='store_true',
-                        help='Migrate schema + run the full backfill chain '
+                        help='Migrate schema and backfill missing scores model by model across the library, skipping completed steps; '
+                             'explicit --generate-critiques LANG also generates photo critiques and personalized suggestions. '
                              '(extract-gps, detect-duplicates, recompute-iqa, '
                              'recompute-saliency, recompute-composition-cpu, '
-                             'recompute-burst, recompute-blinks, recompute-average). '
+                             'recompute-burst, recompute-blinks, recompute-average, generate-critiques). '
+                             'Critiques use the language specified by --generate-critiques LANG. '
                              'Idempotent — re-runs are safe. '
                              'Does NOT run heavy steps like --generate-captions.')
     db_group.add_argument('--compute-recommendations', action='store_true',
@@ -361,7 +372,7 @@ Configuration:
 
     # AI features
     ai_group = parser.add_argument_group('AI features')
-    ai_group.add_argument('--generate-critiques', choices=['en', 'fr', 'de', 'it', 'es', 'pt', 'zh'],
+    ai_group.add_argument('--generate-critiques', choices=SUPPORTED_LANGUAGES,
                         metavar='LANG',
                         help='Generate missing AI critiques and personalized suggestions for all '
                              'scored photos in the selected language (requires VLM)')

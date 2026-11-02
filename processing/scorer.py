@@ -22,12 +22,14 @@ import functools
 import re as _re
 from pathlib import Path
 from int_affinity import storable_int
+from utils.photo_scope import photo_scope_sql
 from db import init_database, get_connection
 from db.render_version import DISPLAY_RENDER_VERSION
 from db.schema import FACES_UPSERT_SQL, face_upsert_row
 from db.scoring_overrides import get_photo_scoring_overrides
 from db.vec import sync_vec_batch
 from processing.progress import emit_progress
+from processing.upgrade_progress import PhotoProgress
 from utils.histogram import unpack_histogram
 from analyzers.vcg_suitability import (
     VCG_SCORE_VERSION,
@@ -1517,7 +1519,7 @@ class Facet:
             logger.error("Error scoring %s: %s", original_path, e)
             return None
 
-    def update_all_aggregates(self, use_embeddings=True, normalizer=None, category_filter=None):
+    def update_all_aggregates(self, use_embeddings=True, normalizer=None, category_filter=None, photo_path=None):
         """
         RE-CALCULATION FEATURE: Updates scores using existing DB data (no images needed).
 
@@ -1576,7 +1578,11 @@ class Facet:
                 recalc_cols.append('clip_embedding')
             cols_sql = ', '.join(recalc_cols)
 
-            if category_filter:
+            if photo_path is not None:
+                scope_sql, scope_params = photo_scope_sql(photo_path)
+                row_count = conn.execute("SELECT COUNT(*) FROM photos WHERE 1=1" + scope_sql, scope_params).fetchone()[0]
+                cursor = conn.execute(f"SELECT {cols_sql} FROM photos WHERE 1=1" + scope_sql, scope_params)
+            elif category_filter:
                 row_count = conn.execute(
                     "SELECT COUNT(*) FROM photos WHERE category = ?", (category_filter,)
                 ).fetchone()[0]
@@ -1605,7 +1611,7 @@ class Facet:
             updates = []
             emit_progress('recompute', 0, row_count, force=True)
             recompute_t0 = time.time()
-            for i, row in enumerate(tqdm(_stream_rows(), total=row_count, desc="Updating DB")):
+            for i, row in enumerate(PhotoProgress(_stream_rows(), total=row_count, desc="Updating DB")):
                 row_dict = dict(row)
                 photo_override = overrides.get(row_dict['path'], {})
                 row_dict['scoring_context'] = photo_override.get('scoring_context')
@@ -1741,7 +1747,7 @@ class Facet:
         if use_embeddings:
             logger.info("Recalculated %s aesthetics from stored embeddings", recalc_from_embedding)
 
-    def recompute_composition_scores(self):
+    def recompute_composition_scores(self, photo_path=None):
         """
         Re-run composition analysis using stored thumbnails.
 
@@ -1754,16 +1760,20 @@ class Facet:
         logger.info("Recomputing composition scores from stored thumbnails...")
 
         with get_connection(self.db_path) as conn:
-            cursor = conn.execute("SELECT path, thumbnail, face_count FROM photos WHERE thumbnail IS NOT NULL")
+            cursor = conn.execute("SELECT path, face_count FROM photos WHERE thumbnail IS NOT NULL"
+                                  + photo_scope_sql(photo_path, "path")[0],
+                                  photo_scope_sql(photo_path, "path")[1])
             rows = list(cursor.fetchall())
 
             logger.info("Found %s photos with thumbnails", len(rows))
 
             updated = 0
             decode_failed = 0
-            for row in tqdm(rows, desc="Recomputing composition"):
+            for row in PhotoProgress(rows, desc="Recomputing composition"):
                 path = row['path']
-                thumbnail_blob = row['thumbnail']
+                thumbnail_blob = conn.execute(
+                    'SELECT thumbnail FROM photos WHERE path = ?', (path,)
+                ).fetchone()['thumbnail']
                 row['face_count'] or 0
 
                 if not thumbnail_blob:
@@ -1813,7 +1823,7 @@ class Facet:
         logger.info("Run --recompute-average to update aggregate scores with new comp_score values")
 
     @staticmethod
-    def _foreach_face_landmark(db_path, select_cols, desc, compute, where_extra=""):
+    def _foreach_face_landmark(db_path, select_cols, desc, compute, where_extra="", photo_path=None):
         """Shared scaffold for the landmark-only face recompute passes.
 
         Selects ``select_cols`` from every face with a stored 106-pt landmark
@@ -1824,30 +1834,39 @@ class Facet:
         ``(results, total_faces, no_landmark_count, decode_errors)``.
         """
         import numpy as np
-        from tqdm import tqdm
+        from collections import Counter
 
         with get_connection(db_path) as conn:
             rows = conn.execute(
-                f"SELECT {select_cols} FROM faces "
+                f"SELECT photo_path, {select_cols} FROM faces "
                 f"WHERE landmark_2d_106 IS NOT NULL{where_extra}"
+                + photo_scope_sql(photo_path, "photo_path")[0],
+                photo_scope_sql(photo_path, "photo_path")[1]
             ).fetchall()
             no_landmark_count = conn.execute(
                 "SELECT COUNT(*) FROM faces WHERE landmark_2d_106 IS NULL"
+                + photo_scope_sql(photo_path, "photo_path")[0],
+                photo_scope_sql(photo_path, "photo_path")[1]
             ).fetchone()[0]
 
         results = []
         decode_errors = 0
-        for row in tqdm(rows, desc=desc):
-            try:
-                landmarks = np.frombuffer(
-                    row['landmark_2d_106'], dtype=np.float32).reshape(106, 2)
-            except (ValueError, TypeError):
-                decode_errors += 1
-                continue
-            results.append(compute(row, landmarks))
+        remaining = Counter(row['photo_path'] for row in rows)
+        with PhotoProgress(total=len(remaining), desc=desc) as progress:
+            for row in rows:
+                try:
+                    landmarks = np.frombuffer(
+                        row['landmark_2d_106'], dtype=np.float32).reshape(106, 2)
+                except (ValueError, TypeError):
+                    decode_errors += 1
+                else:
+                    results.append(compute(row, landmarks))
+                remaining[row['photo_path']] -= 1
+                if remaining[row['photo_path']] == 0:
+                    progress.update()
         return results, len(rows), no_landmark_count, decode_errors
 
-    def recompute_blink_detection(self):
+    def recompute_blink_detection(self, photo_path=None):
         """
         Re-compute blink detection using stored landmarks from the faces table.
 
@@ -1866,7 +1885,7 @@ class Facet:
             return row['photo_path'], 1 if avg_ear < blink_threshold else 0
 
         per_face, total, no_landmark_count, _ = Facet._foreach_face_landmark(
-            self.db_path, "photo_path, landmark_2d_106", "EAR from landmarks", _compute)
+            self.db_path, "photo_path, landmark_2d_106", "EAR from landmarks", _compute, photo_path=photo_path)
 
         if total:
             logger.info("Computing blinks from stored landmarks for %s faces...", total)
@@ -1887,7 +1906,9 @@ class Facet:
         logger.info("Saving results to database...")
         with get_connection(self.db_path) as conn:
             # Reset all photos with faces to non-blink status first
-            conn.execute("UPDATE photos SET is_blink = 0 WHERE face_count >= 1")
+            conn.execute("UPDATE photos SET is_blink = 0 WHERE face_count >= 1"
+                         + photo_scope_sql(photo_path, "path")[0],
+                         photo_scope_sql(photo_path, "path")[1])
             update_data = [(status, path) for path, status in photo_blink_status.items()]
             conn.executemany("UPDATE photos SET is_blink = ? WHERE path = ?", update_data)
             conn.commit()
@@ -1895,7 +1916,7 @@ class Facet:
         blink_count = sum(1 for v in photo_blink_status.values() if v == 1)
         logger.info("Finished. Updated %s photos (%s with blinks).", len(photo_blink_status), blink_count)
 
-    def recompute_eyes_expression(self):
+    def recompute_eyes_expression(self, photo_path=None):
         """Re-compute eyes-open and expression scores from stored 106-pt landmarks.
 
         Mirrors :meth:`recompute_blink_detection` — reads the stored
@@ -1915,7 +1936,7 @@ class Facet:
 
         per_face, total, no_landmark_count, _ = Facet._foreach_face_landmark(
             self.db_path, "photo_path, landmark_2d_106",
-            "Eyes/expression from landmarks", _compute)
+            "Eyes/expression from landmarks", _compute, photo_path=photo_path)
 
         if not total:
             logger.info("No faces with stored landmarks — nothing to compute.")
@@ -1950,7 +1971,7 @@ class Facet:
         logger.info("Finished. Updated %s photos with eyes/expression scores.", len(update_data))
         return len(update_data)
 
-    def recompute_face_signals(self, force=False):
+    def recompute_face_signals(self, force=False, photo_path=None):
         """Backfill per-face eyes-open and smile scores from stored 106-pt landmarks.
 
         Mirrors :meth:`recompute_eyes_expression` but writes the per-face
@@ -1976,7 +1997,7 @@ class Facet:
         where_extra = "" if force else " AND (eyes_open_score IS NULL OR smile_score IS NULL)"
         update_data, total, no_landmark_count, decode_errors = Facet._foreach_face_landmark(
             self.db_path, "id, landmark_2d_106",
-            "Per-face signals from landmarks", _compute, where_extra=where_extra)
+            "Per-face signals from landmarks", _compute, where_extra=where_extra, photo_path=photo_path)
 
         if not total:
             logger.info("No faces with stored landmarks — nothing to compute.")
@@ -2128,7 +2149,7 @@ class Facet:
             pass
         return models
 
-    def recompute_iqa_from_thumbnails(self, batch_size: int = 64):
+    def recompute_iqa_from_thumbnails(self, batch_size: int = 64, photo_path=None, sequential_models=False):
         """Recompute supplementary IQA metrics from stored thumbnails.
 
         Auto-detects the accelerator and groups models into passes:
@@ -2152,16 +2173,26 @@ class Facet:
         start_time = time.time()
 
         # Count work per column
+        pending_models = []
         with get_connection(self.db_path) as conn:
             for model_name, column in self._IQA_MODELS:
                 count = conn.execute(
                     f"SELECT COUNT(*) FROM photos WHERE {column} IS NULL AND thumbnail IS NOT NULL"
+                    + (" AND face_count > 0" if column == 'face_quality_iqa' else "")
+                    + photo_scope_sql(photo_path, "path")[0],
+                    photo_scope_sql(photo_path, "path")[1]
                 ).fetchone()[0]
                 logger.info("  %s -> %s: %s NULL", model_name, column, count)
+                if count:
+                    pending_models.append(model_name)
 
-            where_any_null = " OR ".join(f"{c} IS NULL" for c in columns)
+            where_any_null = " OR ".join(
+                f"({c} IS NULL AND face_count > 0)" if c == 'face_quality_iqa' else f"{c} IS NULL"
+                for c in columns)
             total = conn.execute(
                 f"SELECT COUNT(*) FROM photos WHERE ({where_any_null}) AND thumbnail IS NOT NULL"
+                + photo_scope_sql(photo_path, "path")[0],
+                photo_scope_sql(photo_path, "path")[1]
             ).fetchone()[0]
 
         if total == 0:
@@ -2170,10 +2201,10 @@ class Facet:
 
         # Auto-detect VRAM and group models into passes
         vram_gb = ModelManager.detect_vram()
-        model_names = [m for m, _ in self._IQA_MODELS]
+        model_names = pending_models
         total_model_vram = sum(PYIQA_MODELS[m]['vram_gb'] for m in model_names)
 
-        if vram_gb >= total_model_vram + IQA_PASS_VRAM_MARGIN_GB:
+        if not sequential_models and vram_gb >= total_model_vram + IQA_PASS_VRAM_MARGIN_GB:
             passes = [model_names]  # all at once
         else:
             passes = [[m] for m in model_names]  # one at a time
@@ -2188,7 +2219,7 @@ class Facet:
         counters = {'updated': {col: 0 for col in columns}, 'errors': 0}
 
         for pass_models in passes:
-            self._run_iqa_pass(pass_models, batch_size, counters)
+            self._run_iqa_pass(pass_models, batch_size, counters, photo_path=photo_path)
 
         elapsed = time.time() - start_time
         minutes = elapsed / 60
@@ -2199,7 +2230,7 @@ class Facet:
             logger.error("  %s thumbnail decode errors", counters['errors'])
         logger.info("Run --recompute-average to update aggregate scores with new IQA metrics.")
 
-    def _run_iqa_pass(self, model_names, batch_size, counters):
+    def _run_iqa_pass(self, model_names, batch_size, counters, photo_path=None):
         """Run one IQA pass with the given models loaded simultaneously."""
         from io import BytesIO
         from PIL import Image
@@ -2220,9 +2251,11 @@ class Facet:
 
         with get_connection(self.db_path) as conn:
             cursor = conn.execute(
-                f"""SELECT path, thumbnail, face_count, {', '.join(pass_columns)}
+                f"""SELECT path, face_count, {', '.join(pass_columns)}
                     FROM photos
                     WHERE ({where_null}) AND thumbnail IS NOT NULL"""
+                + photo_scope_sql(photo_path, "path")[0],
+                photo_scope_sql(photo_path, "path")[1]
             )
             rows = list(cursor.fetchall())
 
@@ -2252,33 +2285,41 @@ class Facet:
                     counters['updated'][column] += len(scores)
                 conn.commit()
 
-            for row in tqdm(rows, desc=f"Scoring {label}"):
-                try:
-                    pil_img = Image.open(BytesIO(row['thumbnail'])).convert('RGB')
-                except Exception:
-                    counters['errors'] += 1
-                    continue
+            with PhotoProgress(total=len(rows), desc=f"Scoring {label}") as progress:
+                for row in rows:
+                    try:
+                        blob = conn.execute(
+                            'SELECT thumbnail FROM photos WHERE path = ?', (row['path'],)
+                        ).fetchone()['thumbnail']
+                        pil_img = Image.open(BytesIO(blob)).convert('RGB')
+                    except Exception:
+                        counters['errors'] += 1
+                        progress.update()
+                        continue
 
-                # Which columns still need scoring for this photo?
-                null_cols = [col for col in pass_columns if row[col] is None]
-                # Skip face_quality_iqa for photos without faces
-                if 'face_quality_iqa' in null_cols and not (row['face_count'] or 0):
-                    null_cols.remove('face_quality_iqa')
-                if not null_cols:
-                    continue
+                    # Which columns still need scoring for this photo?
+                    null_cols = [col for col in pass_columns if row[col] is None]
+                    # Skip face_quality_iqa for photos without faces
+                    if 'face_quality_iqa' in null_cols and not (row['face_count'] or 0):
+                        null_cols.remove('face_quality_iqa')
+                    if not null_cols:
+                        progress.update()
+                        continue
 
-                batched_paths.append(row['path'])
-                batched_images.append(pil_img)
-                batched_null_cols.append(null_cols)
+                    batched_paths.append(row['path'])
+                    batched_images.append(pil_img)
+                    batched_null_cols.append(null_cols)
 
-                if len(batched_images) >= batch_size:
+                    if len(batched_images) >= batch_size:
+                        _flush(conn, batched_paths, batched_images, batched_null_cols)
+                        progress.update(len(batched_paths))
+                        batched_paths = []
+                        batched_images = []
+                        batched_null_cols = []
+
+                if batched_images:
                     _flush(conn, batched_paths, batched_images, batched_null_cols)
-                    batched_paths = []
-                    batched_images = []
-                    batched_null_cols = []
-
-            if batched_images:
-                _flush(conn, batched_paths, batched_images, batched_null_cols)
+                    progress.update(len(batched_paths))
 
         for scorer in scorers.values():
             scorer.unload()

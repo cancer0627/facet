@@ -5,6 +5,7 @@ the VLM critique and the narrative-moment tie-breaker behind three interchangeab
 backends selected in ``scoring_config.json`` under ``vlm_backend.type``:
 
   - ``local``             : in-process transformers Qwen path (default, unchanged)
+  - ``llama_cpp``         : in-process GGUFvision inference
   - ``ollama``            : Ollama native REST API (``/api/generate``)
   - ``openai_compatible`` : any OpenAI chat-completions endpoint (``/chat/completions``,
                             e.g. LM Studio, vLLM, OpenRouter)
@@ -56,6 +57,7 @@ logger = logging.getLogger("facet.vlm_backend")
 BACKEND_LOCAL = "local"
 BACKEND_OLLAMA = "ollama"
 BACKEND_OPENAI_COMPATIBLE = "openai_compatible"
+BACKEND_LLAMA_CPP = "llama_cpp"
 REMOTE_BACKEND_TYPES = (BACKEND_OLLAMA, BACKEND_OPENAI_COMPATIBLE)
 
 _CONFIG_SECTION = "vlm_backend"
@@ -118,6 +120,12 @@ class VLMBackend(ABC):
     @abstractmethod
     def generate(self, image: PIL.Image.Image, prompt: str, max_new_tokens: int) -> str:
         raise NotImplementedError
+
+    def load(self) -> None:
+        """Load process-local resources; service-backed implementations need none."""
+
+    def unload(self) -> None:
+        """Release any process-local resources."""
 
 
 class OllamaBackend(VLMBackend):
@@ -190,7 +198,7 @@ def vlm_backend_type(full_config: Optional[dict]) -> str:
 
 
 def create_vlm_backend(full_config: Optional[dict]) -> Optional[VLMBackend]:
-    """Build the configured remote :class:`VLMBackend`, or ``None`` for ``local``.
+    """Build the configured backend, or ``None`` for the transformers ``local`` path.
 
     ``None`` means "use the in-process transformers path"; every caller keeps its
     existing local behavior unchanged. A returned backend is profile-independent.
@@ -200,6 +208,10 @@ def create_vlm_backend(full_config: Optional[dict]) -> Optional[VLMBackend]:
 
     if backend_type == BACKEND_LOCAL:
         return None
+    if backend_type == BACKEND_LLAMA_CPP:
+        from models.llama_cpp_backend import LlamaCppBackend
+
+        return LlamaCppBackend(section.get(BACKEND_LLAMA_CPP) or {})
     if backend_type == BACKEND_OLLAMA:
         cfg = section.get(BACKEND_OLLAMA) or {}
         return OllamaBackend(
@@ -218,21 +230,24 @@ def create_vlm_backend(full_config: Optional[dict]) -> Optional[VLMBackend]:
         )
     raise VLMBackendError(
         f"Unknown vlm_backend.type: {backend_type!r} "
-        f"(use {BACKEND_LOCAL}, {BACKEND_OLLAMA} or {BACKEND_OPENAI_COMPATIBLE})"
+        f"(use {BACKEND_LOCAL}, {BACKEND_LLAMA_CPP}, {BACKEND_OLLAMA} or {BACKEND_OPENAI_COMPATIBLE})"
     )
 
 
 def create_remote_vlm_tagger(full_config: Optional[dict], scoring_config=None):
-    """Return a remote-backed ``VLMTagger``, or ``None`` when the backend is ``local``.
+    """Return a configured ``VLMTagger``, or ``None`` for transformers ``local``.
 
-    Gives the CLI VLM entry points (captioning, ``--recompute-tags-vlm``, the moment
-    tie-break) one un-gated resolution: a remote backend needs neither a local model
-    nor a VRAM profile, so the tagger is built with an empty model config and the
-    backend attached.
+    The historical name also covers the process-local llama_cpp backend.
+
+    Gives command-line entry points a shared resolution independent of the
+    transformers model profile. The backend owns its own configuration and
+    resource loading, so the tagger receives an empty transformers model config.
     """
     try:
         backend = create_vlm_backend(full_config)
     except VLMBackendError as ex:
+        if vlm_backend_type(full_config) == BACKEND_LLAMA_CPP:
+            raise
         logger.warning("Remote VLM backend misconfigured, falling back to local: %s", ex)
         return None
     if backend is None:

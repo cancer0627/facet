@@ -156,7 +156,7 @@ def test_recompute_iqa_labels_a_metal_run_and_keeps_one_model_per_pass(
     init_database(db)
     with get_connection(db) as conn:
         conn.execute(
-            "INSERT INTO photos (path, filename, thumbnail) VALUES (?, ?, ?)",
+            "INSERT INTO photos (path, filename, thumbnail, face_count) VALUES (?, ?, ?, 1)",
             ("/p.jpg", "p.jpg", b"thumb"),
         )
         conn.commit()
@@ -168,7 +168,7 @@ def test_recompute_iqa_labels_a_metal_run_and_keeps_one_model_per_pass(
     executed = []
     monkeypatch.setattr(
         Facet, "_run_iqa_pass",
-        lambda self, model_names, batch_size, counters: executed.append(list(model_names)),
+        lambda self, model_names, batch_size, counters, **kwargs: executed.append(list(model_names)),
     )
 
     facet = Facet(db_path=db, lightweight=True)
@@ -177,6 +177,30 @@ def test_recompute_iqa_labels_a_metal_run_and_keeps_one_model_per_pass(
 
     assert "| mps accelerator, unified memory (36GB) |" in caplog.text
     assert executed == [[model] for model, _ in facet._IQA_MODELS]
+
+
+def test_recompute_only_loads_models_with_applicable_missing_scores(tmp_path, monkeypatch):
+    from db import get_connection, init_database
+    from processing.scorer import Facet
+
+    db = str(tmp_path / 'pending.db')
+    init_database(db)
+    with get_connection(db) as conn:
+        conn.execute('INSERT INTO photos (path, filename, thumbnail, face_count, aesthetic_iaa, '
+                     'liqe_score, qrealign_score) VALUES (?, ?, ?, 0, 7, 6, 5)',
+                     ('/p.jpg', 'p.jpg', b'thumb'))
+        conn.commit()
+    executed = []
+    monkeypatch.setattr(Facet, '_run_iqa_pass',
+                        lambda self, names, *args, **kwargs: executed.extend(names))
+    scorer = Facet(db_path=db, lightweight=True)
+    scorer.recompute_iqa_from_thumbnails()
+    assert executed == []  # Do not load the face quality model when no faces are present.
+    with get_connection(db) as conn:
+        conn.execute('UPDATE photos SET liqe_score = NULL')
+        conn.commit()
+    scorer.recompute_iqa_from_thumbnails()
+    assert executed == ['liqe']
 
 
 def test_qrealign_spec_pins_the_validated_aesthetic_head():

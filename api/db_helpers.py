@@ -135,6 +135,19 @@ def trigger_auto_retrain(db_path, user_id, added=1, conn=None):
         logger.debug("Auto-retrain trigger skipped", exc_info=True)
 
 
+def culling_database_error_detail(exc):
+    """Return a bounded public reason without exposing SQL or filesystem paths."""
+    code = getattr(exc, 'sqlite_errorcode', 0) & 0xff
+    # The fallback also covers database wrappers that omit sqlite_errorcode.
+    if code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED) or 'locked' in str(exc).lower():
+        return {'code': 'database_busy', 'message': 'The database is busy. Try again shortly.'}
+    if code == sqlite3.SQLITE_READONLY:
+        return {'code': 'database_readonly', 'message': 'The database is read-only.'}
+    if code == sqlite3.SQLITE_FULL:
+        return {'code': 'database_full', 'message': 'There is no space left to save the selection.'}
+    return {'code': 'database_error', 'message': 'The database could not save the selection.'}
+
+
 def record_culling_decision(conn, keep_paths, reject_paths, sequence_members,
                             user_id=None, group_type='burst', commit=True):
     """Turn a culling confirm into ranker training pairs, commit, nudge retrain.

@@ -17,6 +17,7 @@ import gc
 import json
 import logging
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -152,7 +153,25 @@ class ChunkedMultiPassProcessor:
             'model_unload_time': 0,
             'inference_time': 0,
             'io_time': 0,
+            'stage_timings': {},
         }
+
+    @contextmanager
+    def _time_stage(self, label):
+        """记录阶段墙钟耗时；异常或中断时也保留已消耗的时间。"""
+        logger.info("[扫描耗时] 开始：%s", label)
+        started = time.perf_counter()
+        completed = False
+        try:
+            yield
+            completed = True
+        finally:
+            elapsed = time.perf_counter() - started
+            timing = self.metrics['stage_timings'].setdefault(label, {'seconds': 0.0, 'calls': 0})
+            timing['seconds'] += elapsed
+            timing['calls'] += 1
+            logger.info("[扫描耗时] %s：%s，%.2f 秒",
+                        "完成" if completed else "中断或异常", label, elapsed)
 
     def reduce_chunk_size(self):
         """Reduce RAM chunk size when memory usage is high.
@@ -374,7 +393,7 @@ class ChunkedMultiPassProcessor:
         if total == 0:
             return self.metrics
 
-        start_time = time.time()
+        start_time = time.perf_counter()
         initial_chunk = self.chunk_size
         tuning_label = "on" if self.auto_tuning_enabled else "off"
         logger.info("Processing %d photos (initial chunk size: %d, auto-tuning: %s)...",
@@ -417,10 +436,12 @@ class ChunkedMultiPassProcessor:
                 pbar.close()
 
             # Ensure all models are unloaded
-            self.model_manager.unload_all()
-
-        self.metrics['total_time'] = time.time() - start_time
-        self._print_summary()
+            try:
+                with self._time_stage('扫描结束清理'):
+                    self.model_manager.unload_all()
+            finally:
+                self.metrics['total_time'] = time.perf_counter() - start_time
+                self._print_summary()
 
         return self.metrics
 
@@ -444,10 +465,14 @@ class ChunkedMultiPassProcessor:
         """
         _ensure_imports()
 
+        chunk_start = time.perf_counter()
+        logger.info("[扫描耗时] 第 %d 批开始，本批 %d 张，预计共 %d 批",
+                    chunk_idx + 1, len(paths), total_chunks)
         # Load images into memory once
-        io_start = time.time()
-        images = self._load_images(paths)
-        self.metrics['io_time'] += time.time() - io_start
+        io_start = time.perf_counter()
+        with self._time_stage('图片加载与基础分析'):
+            images = self._load_images(paths)
+        self.metrics['io_time'] += time.perf_counter() - io_start
 
         # Track results for each photo
         results = {path: {} for path in paths}
@@ -463,16 +488,17 @@ class ChunkedMultiPassProcessor:
         # Run each pass group
         for group_idx, model_group in enumerate(self.pass_groups):
             # Load models for this pass
-            load_start = time.time()
+            load_start = time.perf_counter()
             loaded_models = self._load_pass_models(model_group, supplementary, failed_stages)
-            self.metrics['model_load_time'] += time.time() - load_start
+            self.metrics['model_load_time'] += time.perf_counter() - load_start
 
             # Run inference for each model in this pass
-            infer_start = time.time()
+            infer_start = time.perf_counter()
             device = getattr(self.model_manager, 'device', 'cpu')
             for model_name in list(loaded_models):
                 try:
-                    self._run_model_pass(model_name, loaded_models[model_name], images, results)
+                    with self._time_stage(f'模型 {model_name} 计算（含预处理与数据传递）'):
+                        self._run_model_pass(model_name, loaded_models[model_name], images, results)
                 except Exception as ex:
                     if model_name in supplementary:
                         logger.error("Supplementary %s inference failed, skipping: %s", model_name, ex)
@@ -491,32 +517,39 @@ class ChunkedMultiPassProcessor:
                     if device == UNIFIED_MEMORY_ACCELERATOR:
                         clear_device_cache(device)
 
-            self.metrics['inference_time'] += time.time() - infer_start
+            self.metrics['inference_time'] += time.perf_counter() - infer_start
             self.metrics['passes_executed'] += 1
 
             # Unload models from this pass
-            unload_start = time.time()
-            for model_name in model_group:
-                loaded_models.pop(model_name, None)
-                self.model_manager.unload_model(model_name, reclaim=False)
-            self._reclaim_freed_memory()
-            self.metrics['model_unload_time'] += time.time() - unload_start
+            unload_start = time.perf_counter()
+            with self._time_stage(f'模型组 {" + ".join(model_group)} 卸载与内存回收'):
+                for model_name in model_group:
+                    loaded_models.pop(model_name, None)
+                    self.model_manager.unload_model(model_name, reclaim=False)
+                self._reclaim_freed_memory()
+            self.metrics['model_unload_time'] += time.perf_counter() - unload_start
 
         if failed_stages:
             self._record_chunk_pass_failure(images, results, failed_stages)
 
         if self.restricted:
-            self._save_results_restricted(results, images)
+            with self._time_stage('结果保存与提交'):
+                self._save_results_restricted(results, images)
         else:
             # Compute aggregate scores (CPU pass) - needs images for technical metrics
-            self._compute_aggregates(results, images)
+            with self._time_stage('综合评分计算'):
+                self._compute_aggregates(results, images)
 
             # Save results to database
-            self._save_results(results, images)
+            with self._time_stage('结果保存与提交'):
+                self._save_results(results, images)
 
         # Free memory
-        del images
-        self._reclaim_freed_memory()
+        with self._time_stage('批次结束内存回收'):
+            del images
+            self._reclaim_freed_memory()
+        logger.info("[扫描耗时] 第 %d 批结束，本批总耗时 %.2f 秒",
+                    chunk_idx + 1, time.perf_counter() - chunk_start)
 
     def _reclaim_freed_memory(self):
         """Collect, clear the device cache and hand the freed heap back.
@@ -559,7 +592,8 @@ class ChunkedMultiPassProcessor:
         """
         loaded_models = {}
         for model_name in model_group:
-            model = self.model_manager.load_model_only(model_name)
+            with self._time_stage(f'模型 {model_name} 加载（含缓存恢复）'):
+                model = self.model_manager.load_model_only(model_name)
             if model is None:
                 if model_name in supplementary:
                     logger.warning("Supplementary model '%s' failed to load, skipping.", model_name)
@@ -1285,7 +1319,7 @@ class ChunkedMultiPassProcessor:
         m = self.metrics
         total = m['total_time']
         if total > 0:
-            logger.info("Multi-pass processing complete:")
+            logger.info("多轮扫描耗时汇总（含已完成及中断的阶段）：")
             logger.info("  Images: %d", m['images_processed'])
             logger.info("  Chunks: %d", m['chunks_processed'])
             logger.info("  Passes: %d", m['passes_executed'])
@@ -1304,6 +1338,12 @@ class ChunkedMultiPassProcessor:
             logger.info("  Model load: %.1fs (%.0f%%)", m['model_load_time'], 100 * m['model_load_time'] / total)
             logger.info("  Inference: %.1fs (%.0f%%)", m['inference_time'], 100 * m['inference_time'] / total)
             logger.info("  Model unload: %.1fs (%.0f%%)", m['model_unload_time'], 100 * m['model_unload_time'] / total)
+
+            logger.info("[扫描耗时] 分阶段累计（按耗时降序）：")
+            for label, timing in sorted(m['stage_timings'].items(),
+                                        key=lambda item: item[1]['seconds'], reverse=True):
+                logger.info("  %s：%.2f 秒，占总耗时 %.1f%%，%d 次", label,
+                            timing['seconds'], 100 * timing['seconds'] / total, timing['calls'])
 
             # Auto-tuning summary (only if adjustments occurred)
             monitor = getattr(self, '_ram_monitor', None)

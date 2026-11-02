@@ -142,8 +142,23 @@
     },
     "vlm_backend": {
       "type": "object",
+      "allOf": [{
+        "if": { "properties": { "type": { "const": "llama_cpp" } }, "required": ["type"] },
+        "then": { "required": ["llama_cpp"] }
+      }],
       "properties": {
-        "type": { "enum": ["local", "ollama", "openai_compatible"] }
+        "type": { "enum": ["local", "ollama", "openai_compatible", "llama_cpp"] },
+        "llama_cpp": {
+          "type": "object",
+          "required": ["model_path", "mmproj_path"],
+          "properties": {
+            "model_path": { "type": "string", "minLength": 1 },
+            "mmproj_path": { "type": "string", "minLength": 1 },
+            "n_ctx": { "type": "integer", "minimum": 512 },
+            "n_threads": { "type": "integer", "minimum": 1 },
+            "image_tokens": { "type": "integer", "minimum": 1 }
+          }
+        }
       }
     },
     "xmp_export": { "type": "object" }

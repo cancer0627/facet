@@ -182,6 +182,7 @@ Tags:"""
     def load(self):
         """Load the model (deferred until first use)."""
         if self.backend is not None:
+            self.backend.load()
             return
         if self.model is not None:
             return
@@ -232,6 +233,7 @@ Tags:"""
     def unload(self):
         """Free VRAM by unloading the model."""
         if self.backend is not None:
+            self.backend.unload()
             return
         model_device = str(self.model.device) if self.model is not None else None
         if self.model is not None:

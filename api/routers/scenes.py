@@ -20,6 +20,7 @@ from api.auth import CurrentUser, get_optional_user, require_edition
 from api.database import get_db
 from api.db_helpers import (
     get_visibility_clause, record_culling_decision, set_photos_rejected,
+    culling_database_error_detail,
     album_filter_clause, time_window_clauses, scope_cache_key, paginate,
     HIDE_BURSTS_SQL,
 )
@@ -403,7 +404,8 @@ async def apply_scene_cull(
 
         except HTTPException:
             raise
-        except Exception:
+        except Exception as exc:
             conn.rollback()
             logger.exception("Failed to confirm scene")
-            raise HTTPException(status_code=500, detail='Internal server error')
+            detail = culling_database_error_detail(exc) if isinstance(exc, sqlite3.Error) else 'Internal server error'
+            raise HTTPException(status_code=500, detail=detail) from exc

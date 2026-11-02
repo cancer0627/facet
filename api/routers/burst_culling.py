@@ -25,6 +25,7 @@ from api.subject_bbox import parse_subject_bbox
 from api.db_helpers import (
     get_visibility_clause, paginate, is_multi_user_enabled, get_photos_from_clause,
     trigger_auto_retrain, record_culling_decision, set_photos_rejected,
+    culling_database_error_detail,
     album_filter_clause, time_window_clauses,
     select_in_chunks, scope_cache_key, NO_VISIBILITY_SQL,
     SEQUENCE_OVERRIDE_SELECT, SEQUENCE_OVERRIDE_PENDING_SELECT,
@@ -695,9 +696,9 @@ async def select_burst_photos(
 
         except HTTPException:
             raise
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
             logger.exception("Failed to select burst photos")
-            raise HTTPException(status_code=500, detail='Internal server error')
+            raise HTTPException(status_code=500, detail=culling_database_error_detail(exc)) from exc
 
 
 # --- Similar Groups (AI Culling) ---
@@ -814,9 +815,9 @@ async def select_similar_photos(
 
         except HTTPException:
             raise
-        except sqlite3.Error:
+        except sqlite3.Error as exc:
             logger.exception("Failed to select similar photos")
-            raise HTTPException(status_code=500, detail='Internal server error')
+            raise HTTPException(status_code=500, detail=culling_database_error_detail(exc)) from exc
 
 
 # --- Unified Culling Groups ---
@@ -1738,6 +1739,18 @@ async def confirm_culling_group(
     something about how the set was shot rather than about the picture, and
     feeding that to the ranker would bias every later ranking.
     """
+    try:
+        return await _dispatch_culling_confirm(body, user)
+    except HTTPException as exc:
+        logger.warning("Culling confirm refused: type=%s group=%s status=%s reason=%s",
+                       body.type, body.group_id, exc.status_code, exc.detail)
+        raise
+    except sqlite3.Error as exc:
+        logger.exception("Failed to confirm culling group: type=%s group=%s", body.type, body.group_id)
+        raise HTTPException(status_code=500, detail=culling_database_error_detail(exc)) from exc
+
+
+async def _dispatch_culling_confirm(body, user):
     user_id = user.user_id if user else None
     # A declared sequence kind still routes on its own, so a set reached through
     # its own granularity keeps the existing "paths outside the set are skipped"

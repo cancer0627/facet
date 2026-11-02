@@ -342,9 +342,9 @@ class TestLoadPrecision:
     def test_load_casts_to_float32_off_a_dedicated_gpu(self):
         fake_model = mock.MagicMock(name="birefnet")
         with mock.patch(
-            "transformers.AutoModelForImageSegmentation.from_pretrained",
-            return_value=fake_model,
-        ):
+            "transformers.AutoModelForImageSegmentation",
+        ) as auto_model, mock.patch('models.saliency_compat.needs_compat_worker', return_value=False):
+            auto_model.from_pretrained.return_value = fake_model
             scorer = SaliencyScorer(device="cpu")
             scorer.load()
         fake_model.float.assert_called_once()
@@ -352,9 +352,24 @@ class TestLoadPrecision:
     def test_load_leaves_cuda_at_checkpoint_precision(self):
         fake_model = mock.MagicMock(name="birefnet")
         with mock.patch(
-            "transformers.AutoModelForImageSegmentation.from_pretrained",
-            return_value=fake_model,
-        ):
+            "transformers.AutoModelForImageSegmentation",
+        ) as auto_model, mock.patch('models.saliency_compat.needs_compat_worker', return_value=False):
+            auto_model.from_pretrained.return_value = fake_model
             scorer = SaliencyScorer(device="cuda")
             scorer.load()
         fake_model.float.assert_not_called()
+
+
+def test_overlay_model_uses_scoring_resolution(monkeypatch):
+    """主体覆盖图复用评分分辨率，避免快速评分后仍以默认大图重新推理。"""
+    from api import model_cache
+    monkeypatch.setattr(model_cache, '_saliency_scorer', None)
+    monkeypatch.setattr('api.config._FULL_CONFIG', {
+        'models': {'saliency': {'resolution': 512, 'mask_threshold': 0.4}},
+    })
+    with mock.patch('models.saliency_scorer.SaliencyScorer') as factory:
+        scorer = model_cache.get_or_load_saliency_scorer()
+        factory.assert_called_once_with(model_name=None, resolution=512,
+                                        mask_threshold=0.4, min_subject_pixels=None)
+        assert model_cache.get_or_load_saliency_scorer() is scorer
+        scorer.load.assert_called_once()

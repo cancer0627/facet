@@ -10,6 +10,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatSliderModule } from '@angular/material/slider';
+import { extractErrorDetail } from '../../core/utils/http-error.util';
 import { ApiService } from '../../core/services/api.service';
 import type { ComparisonStats } from '../../core/api/types';
 import { AuthService } from '../../core/services/auth.service';
@@ -292,6 +293,16 @@ class RunGeneration {
     CdkTrapFocus,
   ],
   template: `
+    <ng-template #confirmationNotice>
+    @if (confirmationError(); as error) {
+      <div role="alert" (click)="$event.stopPropagation()" (keydown)="$event.stopPropagation()" class="fixed bottom-24 left-4 right-4 z-[110] mx-auto max-w-2xl rounded-xl p-4 shadow-lg bg-[var(--mat-sys-error-container)] text-[var(--mat-sys-on-error-container)] flex items-start gap-3">
+        <div class="flex-1 min-w-0 whitespace-pre-line break-words">{{ error }}</div>
+        <button mat-icon-button (click)="confirmationError.set(null)"
+                [attr.aria-label]="I18N.ui.buttons.dismiss | translate"><mat-icon>close</mat-icon></button>
+      </div>
+    }
+    </ng-template>
+    @if (!lightboxGroup()) { <ng-container [ngTemplateOutlet]="confirmationNotice" /> }
     <div class="px-2 pt-2 md:px-8 md:pt-3 mx-auto w-full lg:max-w-[96%] h-full flex flex-col">
       <!-- Header (sticky: only the group list below scrolls) -->
       <!-- The toolbar projects into the global header on lg+ (HeaderSlotService) and
@@ -846,6 +857,7 @@ class RunGeneration {
            cdkTrapFocus
            (click)="closeLightbox()"
            (keydown.escape)="closeLightbox()">
+        <ng-container [ngTemplateOutlet]="confirmationNotice" />
         <!-- Escape reaches this binding only from the container itself: every
              inner region shields the page from the darkroom's keys, so each one
              acts on Escape through onDarkroomKeydown() instead. -->
@@ -1485,6 +1497,7 @@ export class BurstCullingComponent implements OnDestroy {
   protected readonly loading = signal(true);
   protected readonly loadingMore = signal(false);
   protected readonly confirming = signal(false);
+  protected readonly confirmationError = signal<string | null>(null);
 
   /** Monotonic id bumped on every filter change; loadGroups/loadMore drop late responses whose generation no longer matches. */
   private loadGenerationId = 0;
@@ -3243,12 +3256,40 @@ export class BurstCullingComponent implements OnDestroy {
           void this.refreshComparisonStats();
           void this.refreshRankerStatus();
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           this.unconfirmGroup(key);
-          this.snackBar.open(this.i18n.t(I18N.culling.error_confirming), '', { duration: 2000, horizontalPosition: 'right', verticalPosition: 'bottom' });
+          this.showConfirmationError(error);
         });
     }, true);
     return true;
+  }
+
+  private showConfirmationError(error: unknown): void {
+    const keys = I18N.culling.confirm_error;
+    const http = error instanceof HttpErrorResponse ? error : null;
+    const detail = extractErrorDetail(error);
+    const structured = http?.error?.detail;
+    const databaseKeys: Record<string, string> = {
+      database_busy: keys.database_busy, database_readonly: keys.database_readonly,
+      database_full: keys.database_full, database_error: keys.database_error,
+    };
+    let reasonKey = keys.unknown as string;
+    if (structured && typeof structured === 'object' && !Array.isArray(structured)
+        && Object.hasOwn(databaseKeys, structured.code)) {
+      reasonKey = databaseKeys[structured.code];
+    } else if (http) {
+      if (http.status === 0) reasonKey = keys.network;
+      else if (http.status === 401) reasonKey = keys.auth;
+      else if (http.status === 403) reasonKey = keys.forbidden;
+      else if (http.status === 404 || detail?.startsWith('Paths not in ')) reasonKey = keys.group_changed;
+      else if (http.status === 400 || http.status === 422) reasonKey = keys.invalid;
+      else if (http.status === 429) reasonKey = keys.rate_limited;
+      else if (http.status >= 500) reasonKey = keys.server;
+    }
+    const lines = [this.i18n.t(I18N.culling.error_confirming), this.i18n.t(reasonKey)];
+    if (http && http.status !== 0) lines.push(this.i18n.t(keys.status, { status: http.status }));
+    if (detail && detail !== 'Internal server error') lines.push(this.i18n.t(keys.server_detail, { detail }));
+    this.confirmationError.set(lines.join('\n'));
   }
 
   private unconfirmGroup(key: string): void {
@@ -3513,8 +3554,8 @@ export class BurstCullingComponent implements OnDestroy {
         return next;
       });
       this.snackBar.open(this.i18n.t(I18N.culling.confirmed), '', { duration: 2000, horizontalPosition: 'right', verticalPosition: 'bottom' });
-    } catch {
-      this.snackBar.open(this.i18n.t(I18N.culling.error_auto_select), '', { duration: 2000, horizontalPosition: 'right', verticalPosition: 'bottom' });
+    } catch (error: unknown) {
+      this.showConfirmationError(error);
     } finally {
       this.confirming.set(false);
     }
