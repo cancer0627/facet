@@ -1060,6 +1060,8 @@
     "active_filters": "{count} 个筛选条件已生效",
     "unknown_person": "未知",
     "selection": {
+      "enter_mode": "选择",
+      "exit_mode": "取消选择",
       "count": "已选 {count} 张",
       "clear": "清除",
       "copy_filenames": "复制文件名",

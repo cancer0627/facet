@@ -1060,6 +1060,8 @@
     "active_filters": "{count} active filters",
     "unknown_person": "Unknown",
     "selection": {
+      "enter_mode": "Select",
+      "exit_mode": "Cancel selection",
       "count": "{count} selected",
       "clear": "Clear",
       "copy_filenames": "Copy filenames",

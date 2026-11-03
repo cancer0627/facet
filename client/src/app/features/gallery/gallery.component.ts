@@ -39,7 +39,7 @@ import { SequenceKindIconPipe, SEQUENCE_KINDS_KEPT_WHOLE } from '../../shared/pi
 import { IsSelectedPipe } from '../../shared/pipes/selection.pipe';
 import { PhotoSetKindIconPipe, PhotoSetKindLabelPipe } from '../../shared/pipes/photo-set-kind.pipe';
 import { AuthService } from '../../core/services/auth.service';
-import { useDesktopSignal, DETAILS_RAIL_MIN_WIDTH_PX } from '../../shared/utils/media-query';
+import { useDesktopSignal } from '../../shared/utils/media-query';
 import { downloadAll } from '../../shared/utils/download';
 import { basename, copyLines } from '../../shared/utils/clipboard';
 import { I18nService } from '../../core/services/i18n.service';
@@ -186,7 +186,12 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
         (openedChange)="onFilterDrawerChange($event)">
         @if (detailsRailVisible()) {
           <div class="p-2">
-            @if (tooltipPhoto(); as p) {
+            <div class="flex justify-end">
+              <button mat-icon-button (click)="closeDetails()" [attr.aria-label]="I18N.dialog.close | translate">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+            @if (detailsPhoto(); as p) {
               <app-photo-tooltip [photo]="p" [docked]="true" [pinned]="true"
                                  [histogramDefaultMode]="tooltipHistogramDefaultMode()"
                                  [indicatorPercent]="clippingIndicatorPercent()"
@@ -319,8 +324,7 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
                       [thumbSize]="thumbSize()"
                       [isEditionMode]="auth.isEdition()"
                       [personFilterId]="store.filters().person_id"
-                      [tooltipMode]="tooltipMode()"
-                      [panelActivation]="panelActivation()"
+                      tooltipMode="hover"
                       (selectionChange)="toggleSelection($event.photo, $event.event, row.startIndex + i)"
                       (tooltipShow)="showTooltip($event.event, $event.photo)"
                       (tooltipHide)="hideTooltip()"
@@ -366,8 +370,7 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
                   [thumbSize]="thumbSize()"
                   [isEditionMode]="auth.isEdition()"
                   [personFilterId]="store.filters().person_id"
-                  [tooltipMode]="tooltipMode()"
-                      [panelActivation]="panelActivation()"
+                  tooltipMode="hover"
                   [style.content-visibility]="'auto'"
                   [style.contain-intrinsic-size]="'auto ' + (cardWidth() + 80) + 'px'"
                   (selectionChange)="toggleSelection($event.photo, $event.event, i)"
@@ -422,8 +425,7 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
                       [thumbSize]="thumbSize()"
                       [isEditionMode]="auth.isEdition()"
                       [personFilterId]="store.filters().person_id"
-                      [tooltipMode]="tooltipMode()"
-                      [panelActivation]="panelActivation()"
+                      tooltipMode="hover"
                       (selectionChange)="toggleSelection($event.photo, $event.event, row.startIndex + i)"
                       (tooltipShow)="showTooltip($event.event, $event.photo)"
                       (tooltipHide)="hideTooltip()"
@@ -526,13 +528,13 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
     }
 
     <!-- Photo details tooltip (single instance, repositioned on hover, hidden on small/touch devices) -->
-    @if (!tooltipDisabled() && !panelMode() && (tooltipMode() === 'click' || (isDesktop() && !isTouchDevice()))) {
-      <app-photo-tooltip
+    @if (isDesktop() && !isTouchDevice()) {
+      <app-photo-tooltip data-hover-tooltip
         [photo]="tooltipPhoto()"
         [x]="tooltipX()"
         [y]="tooltipY()"
         [flipped]="tooltipFlipped()"
-        [pinned]="tooltipMode() === 'click'"
+        [pinned]="false"
         [histogramDefaultMode]="tooltipHistogramDefaultMode()"
         [indicatorPercent]="clippingIndicatorPercent()"
         (personSelected)="store.updateFilter('person_id', $event)"
@@ -701,6 +703,12 @@ export class GalleryComponent implements OnInit, OnDestroy {
   // Sidebar scroll preservation
   private savedFilterScroll = 0;
 
+  protected readonly detailsPhoto = signal<Photo | null>(null);
+
+  protected closeDetails(): void {
+    this.detailsPhoto.set(null);
+  }
+
   // Tooltip state
   protected readonly tooltipPhoto = signal<Photo | null>(null);
   protected readonly tooltipX = signal(0);
@@ -771,15 +779,6 @@ export class GalleryComponent implements OnInit, OnDestroy {
   });
   protected readonly isDesktop = this.desktop.isDesktop;
 
-  /**
-   * Whether the viewport is wide enough to give up a 320px strip permanently.
-   *
-   * The details rail is not merely a desktop feature: at the md breakpoint the
-   * drawer would take more than a third of the window and leave the grid too
-   * narrow to browse, so it wants its own, higher bar.
-   */
-  private readonly railWide = useDesktopSignal({ breakpointPx: DETAILS_RAIL_MIN_WIDTH_PX });
-
   /** Effective gallery mode: force grid on small viewports */
   readonly effectiveGalleryMode = computed(() =>
     (this.isDesktop() && this.containerWidth() > 0) ? this.store.galleryMode() : 'grid',
@@ -788,15 +787,7 @@ export class GalleryComponent implements OnInit, OnDestroy {
   /** Whether to hide photo details below the thumbnails */
   readonly effectiveHideDetails = computed(() => this.store.filters().hide_details);
 
-  /** Tooltip mode signal — 'hover' | 'click' | 'off' */
-  readonly tooltipMode = computed(() => this.store.filters().tooltip_mode);
-  /** Which gesture(s) retarget the docked panel — only meaningful when tooltipMode is 'panel'. */
-  readonly panelActivation = computed(() => this.store.filters().panel_activation);
-  /** Whether tooltip is fully disabled (off mode) — used for skipping rendering and hover handlers */
-  readonly tooltipDisabled = computed(() => this.tooltipMode() === 'off');
-
-  /** Docked rail needs real width, not merely "not a phone". */
-  readonly panelMode = computed(() => this.tooltipMode() === 'panel' && this.railWide.isDesktop());
+  readonly panelMode = computed(() => this.detailsPhoto() !== null);
 
   /**
    * Whether the end drawer currently shows details rather than filters.
@@ -999,7 +990,6 @@ export class GalleryComponent implements OnInit, OnDestroy {
     afterNextRender(() => {
       this.isTouchDevice.set(window.matchMedia('(hover: none)').matches);
       this.desktop.setup();
-      this.railWide.setup();
       this.setupResizeObserver();
       this.setupScrollTracking();
     });
@@ -1031,19 +1021,6 @@ export class GalleryComponent implements OnInit, OnDestroy {
       untracked(() => this.tooltipPhoto.set(null));
       // Re-measure the virtual window once the new rows are in the DOM
       requestAnimationFrame(() => this.updateWindowPosition());
-    });
-
-    // A tooltip shown under one mode's semantics (hover tracks the cursor,
-    // click toggles on the same photo, panel docks and keeps the last one on
-    // mouse-out) must not carry over into another's. Most visibly: a photo
-    // left in tooltipPhoto by hover survives a switch to click mode, so the
-    // FIRST click on that same photo matches showTooltip's toggle condition
-    // and hides instead of shows. A dedicated effect rather than folding this
-    // into the one above: that one also recomputes scroll/virtual-window
-    // layout, which a mode switch has no reason to trigger.
-    effect(() => {
-      this.tooltipMode(); // track dependency
-      untracked(() => this.tooltipPhoto.set(null));
     });
   }
 
@@ -1101,7 +1078,6 @@ export class GalleryComponent implements OnInit, OnDestroy {
     this.saveViewSnapshot();
     this.resizeObserver?.disconnect();
     this.desktop.cleanup();
-    this.railWide.cleanup();
   }
 
   /** Capture scroll + query state so back-navigation can skip the reload. */
@@ -1161,6 +1137,7 @@ export class GalleryComponent implements OnInit, OnDestroy {
     // must not be recorded as "the user asked for filters" — otherwise closing
     // the filters would immediately re-open them and the toggle would be stuck.
     if (open && this.detailsRailVisible()) return;
+    if (!open && this.detailsRailVisible()) this.closeDetails();
     this.store.setFilterDrawerOpen(open);
     const sidebarEl = document.querySelector('app-gallery-filter-sidebar div[data-scroll]') as HTMLElement | null;
     if (!sidebarEl) return;
@@ -1188,7 +1165,13 @@ export class GalleryComponent implements OnInit, OnDestroy {
    *  newly current card clear of the action bar that this very selection has
    *  just raised over it. */
   protected toggleSelection(photo: Photo, event: MouseEvent | undefined, index: number): void {
-    this.store.toggleSelection(photo, event);
+    if (this.store.isSelecting()) {
+      this.store.toggleSelection(photo, event);
+    } else {
+      this.hideTooltip();
+      this.detailsPhoto.set(photo);
+      this.store.setFilterDrawerOpen(false);
+    }
     this.setCursor(index);
     this.focusCard(index);
   }
@@ -1758,25 +1741,7 @@ export class GalleryComponent implements OnInit, OnDestroy {
   }
 
   showTooltip(event: MouseEvent, photo: Photo): void {
-    const mode = this.tooltipMode();
-    if (mode === 'off') return;
-    // The rail is parked, so none of the placement maths below applies to it.
-    // Only while it is actually shown, though: with the mode selected on a
-    // viewport too narrow for the rail, skipping the maths left the floating
-    // tooltip to render at a stale coordinate in the middle of the page.
-    if (mode === 'panel' && this.panelMode()) {
-      this.tooltipPhoto.set(photo);
-      return;
-    }
-    // Hover mode is meaningless on touch (mouseenter fires once on tap and
-    // sticks) so we suppress it there. Click mode is the intended touch path
-    // and must work — only block hover on touch devices.
-    if (mode === 'hover' && this.isTouchDevice()) return;
-    // In click mode, toggle: clicking the same photo hides the tooltip.
-    if (mode === 'click' && this.tooltipPhoto() === photo) {
-      this.hideTooltip();
-      return;
-    }
+    if (this.isTouchDevice()) return;
     const card = (event.currentTarget as HTMLElement)?.closest('.relative.rounded-lg') as HTMLElement ?? event.currentTarget as HTMLElement;
     const rect = card.getBoundingClientRect();
     const padding = 16;
@@ -1824,7 +1789,7 @@ export class GalleryComponent implements OnInit, OnDestroy {
 
     setTimeout(() => {
       if (this.tooltipPhoto() !== photo) return;
-      const el = document.querySelector('app-photo-tooltip > div') as HTMLElement | null;
+      const el = document.querySelector('app-photo-tooltip[data-hover-tooltip] > div') as HTMLElement | null;
       if (!el) return;
       const { width: actualWidth, height: actualHeight } = el.getBoundingClientRect();
       const wouldOverflowRightActual = rect.right + padding + actualWidth > vw - padding;
@@ -1841,9 +1806,6 @@ export class GalleryComponent implements OnInit, OnDestroy {
   }
 
   hideTooltip(): void {
-    // A docked rail keeps the last photo on mouse-out. Blanking it every time
-    // the cursor crossed a gap would undo the reason for docking it.
-    if (this.panelMode()) return;
     this.tooltipPhoto.set(null);
   }
 
@@ -2017,7 +1979,7 @@ export class GalleryComponent implements OnInit, OnDestroy {
       case 'Home': next = 0; break;
       case 'End': next = photos.length - 1; break;
       case 'Escape':
-        if (this.selectionCount()) {
+        if (this.store.isSelecting()) {
           event.preventDefault();
           this.clearSelection();
         }

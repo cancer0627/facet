@@ -311,6 +311,14 @@ export class GalleryStore {
   // and the server derives the rows, which is what makes "select all" mean all
   // 650 rather than the 64 fetched so far. `excludedPaths` carries the few the
   // user then unticked.
+  readonly selectionMode = signal(false);
+  readonly isSelecting = computed(() => this.selectionMode() || this.selectionCount() > 0);
+
+  toggleSelectionMode(): void {
+    if (this.isSelecting()) this.clearSelection();
+    else this.selectionMode.set(true);
+  }
+
   readonly selectedPaths = signal<Set<string>>(new Set());
   readonly selectionScope = signal<SelectionScope>('paths');
   /** Photos unticked out of a 'view'-scoped selection. Always empty under 'paths'. */
@@ -448,6 +456,7 @@ export class GalleryStore {
   }
 
   clearSelection(): void {
+    this.selectionMode.set(false);
     this.selectedPaths.set(new Set());
     this.excludedPaths.set(new Set());
     this.selectionScope.set('paths');

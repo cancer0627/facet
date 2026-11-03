@@ -1076,6 +1076,8 @@ export const I18N = {
     active_filters: "gallery.active_filters",
     unknown_person: "gallery.unknown_person",
     selection: {
+      enter_mode: "gallery.selection.enter_mode",
+      exit_mode: "gallery.selection.exit_mode",
       count: "gallery.selection.count",
       clear: "gallery.selection.clear",
       copy_filenames: "gallery.selection.copy_filenames",

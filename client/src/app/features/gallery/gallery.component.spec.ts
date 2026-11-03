@@ -1,4 +1,5 @@
 import type { Mock } from 'vitest';
+import { makePhoto } from '../../../testing/photo.fixture';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { computed, signal, WritableSignal } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
@@ -28,7 +29,7 @@ describe('GalleryComponent', () => {
 
    
   let mockStore: any;
-  let mockApi: { thumbnailUrl: Mock; post: Mock; downloadUrl: Mock; getRaw: Mock };
+  let mockApi: { get: Mock; thumbnailUrl: Mock; post: Mock; downloadUrl: Mock; getRaw: Mock };
   let mockAuth: Record<string, unknown>;
   // `translations` and `lang` are only read once the real template renders:
   // the translate pipe subscribes to the bundle even when `t` is stubbed.
@@ -122,7 +123,11 @@ describe('GalleryComponent', () => {
       viewFilterParams: signal({}),
     };
 
+    mockStore.selectionMode = signal(false);
+    mockStore.isSelecting = computed(() => mockStore.selectionMode() || mockStore.selectionCount() > 0);
+
     mockApi = {
+      get: vi.fn(() => of(null)),
       thumbnailUrl: vi.fn((path: string) => `/thumbnail?path=${path}`),
       post: vi.fn(() => of({ success: true, overridden: 0, skipped: 0, kind: null })),
       downloadUrl: vi.fn((path: string) => `/download?path=${path}`),
@@ -355,7 +360,8 @@ describe('GalleryComponent', () => {
       expect(hasActivePhoto()).toBe(true);
     });
 
-    it('still hands the click to the store', () => {
+    it('hands the click to the store while selecting', () => {
+      mockStore.selectionMode.set(true);
       const photo = { path: '/b.jpg' };
       click(photo, 1);
       expect(mockStore.toggleSelection).toHaveBeenCalledWith(photo, undefined);
@@ -674,7 +680,7 @@ describe('GalleryComponent', () => {
   // identify cards by their position in the grid, never by the data-pidx the
   // same expression writes.
   describe('the marker lands on the card that was clicked (rendered)', () => {
-    const photos = Array.from({ length: 12 }, (_, n) => ({
+    const photos = Array.from({ length: 12 }, (_, n) => makePhoto({
       path: `/p${n}.jpg`, filename: `p${n}.jpg`, image_width: 4000, image_height: 3000,
     }));
     let fixture: ComponentFixture<GalleryComponent> | null = null;
@@ -713,6 +719,7 @@ describe('GalleryComponent', () => {
       const cards = [...fixture.nativeElement.querySelectorAll('app-photo-card')] as HTMLElement[];
       // Two rows at least, so the card the specs reach for is never in the first.
       expect(cards.length).toBeGreaterThan(gridColumnCount(1200 - 32, 300, 8, true));
+      cards.forEach(card => card.scrollIntoView = vi.fn());
       return cards;
     }
 
@@ -1061,160 +1068,71 @@ describe('GalleryComponent', () => {
     });
   });
 
-  describe('docked details panel (tooltip_mode = panel)', () => {
-    const hoverEvent = { currentTarget: null } as unknown as MouseEvent;
+  describe('photo details and selection gestures', () => {
+    const first = { path: '/a.jpg', image_width: 4000, image_height: 3000 } as never;
+    const second = { path: '/b.jpg', image_width: 4000, image_height: 3000 } as never;
 
-    /** Force the rail's width gate on, the way a >=1280px viewport would. */
-    function widenForRail() {
-      vi.stubGlobal('matchMedia', (media: string) => ({
-        matches: true, media, addEventListener() {}, removeEventListener() {},
-      }));
-      (component as unknown as { railWide: { setup(): void } }).railWide.setup();
+    function hover(photo = second): void {
+      const card = document.createElement('div');
+      card.className = 'relative rounded-lg';
+      component.showTooltip({ currentTarget: card } as unknown as MouseEvent, photo);
     }
 
-    beforeEach(() => {
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'panel' });
+    it('opens side details on a normal click without selecting', () => {
+      click(first, 0);
+      expect(component['detailsPhoto']()).toBe(first);
+      expect(component.detailsRailVisible()).toBe(true);
+      expect(mockStore.toggleSelection).not.toHaveBeenCalled();
+      expect(mockStore.setFilterDrawerOpen).toHaveBeenCalledWith(false);
     });
 
-    afterEach(() => vi.unstubAllGlobals());
-
-    it('needs a wide viewport as well as the setting, not the setting alone', () => {
-      expect(component['tooltipMode']()).toBe('panel');
-      expect(component.panelMode()).toBe(false);
+    it('selects only while in selection mode and keeps side details unchanged', () => {
+      click(first, 0);
+      mockStore.selectionMode.set(true);
+      click(second, 1);
+      expect(mockStore.toggleSelection).toHaveBeenCalledWith(second, undefined);
+      expect(component['detailsPhoto']()).toBe(first);
     });
 
-    describe('with a viewport wide enough for the rail', () => {
-      beforeEach(() => widenForRail());
-
-      it('is active', () => {
-        expect(component.panelMode()).toBe(true);
-      });
-
-      it('hovering a photo feeds the rail without any placement maths', () => {
-        const photo = { path: '/a.jpg' } as never;
-        component.showTooltip(hoverEvent, photo);
-        expect(component['tooltipPhoto']()).toBe(photo);
-        expect(component['tooltipX']()).toBe(0);
-        expect(component['tooltipY']()).toBe(0);
-      });
-
-      it('keeps the last photo when the cursor leaves the grid', () => {
-        const photo = { path: '/a.jpg' } as never;
-        component.showTooltip(hoverEvent, photo);
+    for (const selecting of [false, true]) {
+      it(`keeps hover bubbles independent of side details (selecting=${selecting})`, () => {
+        click(first, 0);
+        mockStore.selectionMode.set(selecting);
+        hover();
+        expect(component['tooltipPhoto']()).toBe(second);
+        expect(component['detailsPhoto']()).toBe(first);
         component.hideTooltip();
-        expect(component['tooltipPhoto']()).toBe(photo);
+        expect(component['tooltipPhoto']()).toBeNull();
+        expect(component['detailsPhoto']()).toBe(first);
       });
-
-      it('yields the shared drawer to the filters while they are open', () => {
-        mockStore.filterDrawerOpen.set(true);
-        expect(component.detailsRailVisible()).toBe(false);
-      });
-    });
-
-    it('still clears on mouse-out in hover mode', () => {
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'hover' });
-      component.hideTooltip();
-      expect(component['tooltipPhoto']()).toBeNull();
-    });
-
-    it('falls back to a positioned floating tooltip when the rail cannot be shown', () => {
-      // Selecting the mode on a viewport too narrow for the rail used to skip
-      // the placement maths and leave the floating box at a stale coordinate.
-      const card = document.createElement('div');
-      card.className = 'relative rounded-lg';
-      document.body.appendChild(card);
-      const photo = { path: '/a.jpg', image_width: 4000, image_height: 3000 } as never;
-      component.showTooltip({ currentTarget: card } as unknown as MouseEvent, photo);
-      expect(component['tooltipPhoto']()).toBe(photo);
-      card.remove();
-    });
-
-    it('clears on mouse-out while the rail is unavailable, like hover does', () => {
-      const photo = { path: '/a.jpg' } as never;
-      component['tooltipPhoto'].set(photo);
-      component.hideTooltip();
-      expect(component['tooltipPhoto']()).toBeNull();
-    });
-  });
-
-  describe('tooltip mode switch clears a stale tooltipPhoto', () => {
-    function makeCard(): HTMLElement {
-      const card = document.createElement('div');
-      card.className = 'relative rounded-lg';
-      document.body.appendChild(card);
-      return card;
     }
-    const photo = { path: '/a.jpg', image_width: 4000, image_height: 3000 } as never;
 
-    it('a hover-shown tooltip does not survive a switch to click mode', () => {
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'hover' });
-      TestBed.flushEffects();
-      const card = makeCard();
-      component.showTooltip({ currentTarget: card } as unknown as MouseEvent, photo);
-      expect(component['tooltipPhoto']()).toBe(photo);
-
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'click' });
-      TestBed.flushEffects();
-
-      expect(component['tooltipPhoto']()).toBeNull();
-      card.remove();
-    });
-
-    it('the first click in the new mode shows the tooltip rather than hiding it', () => {
-      // A test asserting only "clicking twice toggles" would pass even if a
-      // stale hover-set tooltipPhoto made this very first click hide instead
-      // of show -- assert the show explicitly.
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'hover' });
-      TestBed.flushEffects();
-      const card = makeCard();
-      component.showTooltip({ currentTarget: card } as unknown as MouseEvent, photo);
-
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'click' });
-      TestBed.flushEffects();
-      component.showTooltip({ currentTarget: card } as unknown as MouseEvent, photo);
-
-      expect(component['tooltipPhoto']()).toBe(photo);
-      card.remove();
-    });
-
-    it('a click-pinned tooltip does not survive a switch to hover mode', () => {
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'click' });
-      TestBed.flushEffects();
-      const card = makeCard();
-      component.showTooltip({ currentTarget: card } as unknown as MouseEvent, photo);
-      expect(component['tooltipPhoto']()).toBe(photo);
-
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'hover' });
-      TestBed.flushEffects();
-
-      expect(component['tooltipPhoto']()).toBeNull();
-      card.remove();
-    });
-
-    it('a tooltip does not survive a switch to off mode', () => {
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'hover' });
-      TestBed.flushEffects();
-      const card = makeCard();
-      component.showTooltip({ currentTarget: card } as unknown as MouseEvent, photo);
-
+    it('ignores legacy tooltip preferences when hovering', () => {
       mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'off' });
-      TestBed.flushEffects();
-
-      expect(component['tooltipPhoto']()).toBeNull();
-      card.remove();
+      hover();
+      expect(component['tooltipPhoto']()).toBe(second);
     });
 
-    it('switching into panel mode does not carry over a stale hover tooltip', () => {
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'hover' });
-      TestBed.flushEffects();
-      const card = makeCard();
-      component.showTooltip({ currentTarget: card } as unknown as MouseEvent, photo);
+    it('can close details and reopen them by clicking the same photo', () => {
+      click(first, 0);
+      component['closeDetails']();
+      expect(component.panelMode()).toBe(false);
+      click(first, 0);
+      expect(component.detailsRailVisible()).toBe(true);
+    });
 
-      mockStore.filters.set({ ...DEFAULT_FILTERS, tooltip_mode: 'panel' });
-      TestBed.flushEffects();
+    it('yields the drawer to filters without changing the detail photo', () => {
+      click(first, 0);
+      mockStore.filterDrawerOpen.set(true);
+      expect(component.detailsRailVisible()).toBe(false);
+      mockStore.filterDrawerOpen.set(false);
+      expect(component.detailsRailVisible()).toBe(true);
+    });
 
-      expect(component['tooltipPhoto']()).toBeNull();
-      card.remove();
+    it('closes side details when the drawer is dismissed', () => {
+      click(first, 0);
+      component.onFilterDrawerChange(false);
+      expect(component.panelMode()).toBe(false);
     });
   });
 

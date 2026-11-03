@@ -1172,6 +1172,32 @@ describe('GalleryStore selection', () => {
     store.total.set(650);
   });
 
+  it('enters selection mode with no selected photos and exits after toggling off', () => {
+    expect(store.isSelecting()).toBe(false);
+    store.toggleSelectionMode();
+    expect(store.isSelecting()).toBe(true);
+    store.toggleSelection(store.photos()[0]);
+    store.toggleSelection(store.photos()[0]);
+    expect(store.isSelecting()).toBe(true);
+    store.toggleSelectionMode();
+    expect(store.isSelecting()).toBe(false);
+  });
+
+  it('clears all selected photos when leaving selection mode', () => {
+    store.toggleSelectionMode();
+    store.selectWholeView();
+    store.toggleSelectionMode();
+    expect(store.selectionCount()).toBe(0);
+    expect(store.isSelecting()).toBe(false);
+  });
+
+  it('recognizes selections initiated by bulk actions', () => {
+    store.selectAll();
+    expect(store.isSelecting()).toBe(true);
+    store.clearSelection();
+    expect(store.isSelecting()).toBe(false);
+  });
+
   it('toggles a single photo', () => {
     store.toggleSelection(store.photos()[1]);
     expect([...store.selectedPaths()]).toEqual(['/b.jpg']);

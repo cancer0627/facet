@@ -42,7 +42,6 @@ import { Photo, normalisePhotoFlagsAll } from './shared/models/photo.model';
 import { DateRangeFilterComponent } from './shared/components/date-range-filter/date-range-filter.component';
 import { I18N, I18N_KEYS } from './core/i18n/keys';
 import { folderDisplayName } from './features/folders/folders.util';
-import { useDesktopSignal, DETAILS_RAIL_MIN_WIDTH_PX } from './shared/utils/media-query';
 
 /** When the "a newer Facet is out" notice was last shown, so it stays weekly. */
 const RELEASE_NOTICE_KEY = 'facet_release_notice_shown';
@@ -478,18 +477,7 @@ export class App implements OnInit {
     });
   }
 
-  /**
-   * Whether the viewport can host the docked details rail.
-   *
-   * Gates the tooltip menu's "Side panel" entry: below this width the rail is
-   * not rendered, so offering the mode would let the user pick a setting that
-   * silently does nothing but fall back to the floating tooltip.
-   */
-  private readonly railCapable = useDesktopSignal({ breakpointPx: DETAILS_RAIL_MIN_WIDTH_PX });
-  protected readonly canDockDetails = this.railCapable.isDesktop;
-
   async ngOnInit(): Promise<void> {
-    this.railCapable.setup();
     this.setupUpdateNotifications();
     await this.i18n.loadLanguages();
     await this.i18n.load();
