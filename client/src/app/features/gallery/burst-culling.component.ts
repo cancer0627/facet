@@ -315,7 +315,7 @@ class RunGeneration {
         <ng-container [ngTemplateOutlet]="cullToolbar" />
       </div>
       <ng-template #cullToolbar>
-        <div class="flex items-center gap-3 md:gap-4 min-w-0
+        <div class="flex items-center gap-0 lg:gap-1 min-w-0 w-full
                     max-lg:fixed max-lg:bottom-0 max-lg:left-0 max-lg:right-0 max-lg:z-40
                     max-lg:px-3 max-lg:py-2
                     max-lg:bg-[var(--mat-sys-surface-container)] max-lg:border-t max-lg:border-[var(--mat-sys-outline-variant)]
@@ -329,7 +329,8 @@ class RunGeneration {
                something CSS can ask -- the toolbar renders twice (inline and
                projected into the shell header), so no single element measurement
                would answer for both. -->
-          <div class="flex flex-nowrap items-center gap-3 md:gap-4 min-w-0 flex-1 overflow-x-auto overflow-y-hidden
+          <!-- 两侧各留 6 像素，容纳按钮超出可见边界的点击区域，避免无意义的横向滚动。 -->
+          <div class="flex flex-nowrap items-center gap-0 lg:gap-1 min-w-0 flex-1 px-1.5 overflow-x-auto overflow-y-hidden
                       [mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)]">
             @if (scoped()) {
               <button mat-icon-button (click)="exitScope()"
