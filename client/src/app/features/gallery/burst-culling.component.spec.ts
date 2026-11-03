@@ -12,6 +12,7 @@ import { I18nService } from '../../core/services/i18n.service';
 import { GalleryStore } from './gallery.store';
 import { BurstCullingComponent } from './burst-culling.component';
 import { SyncedZoomComponent } from './synced-zoom.component';
+import { HistogramComponent } from '../../shared/components/histogram/histogram.component';
 import { SwipeDecisionDirective, SWIPE_SETTLE_MS } from '../../shared/directives/swipe-decision.directive';
 
 describe('BurstCullingComponent', () => {
@@ -3214,6 +3215,51 @@ describe('BurstCullingComponent compare panes (rendered)', () => {
     [...(fixture.nativeElement as HTMLElement).querySelectorAll('button')]
       .find(b => b.getAttribute('aria-label') === label);
   const keptPaths = () => [...(component['selectionsMap']().get(1) ?? [])];
+
+  it('loads each pane histogram from its own stored photo data without a thumbnail fallback', () => {
+    const api = TestBed.inject(ApiService);
+    const luma = [0, 1, 4, 1];
+    vi.mocked(api.get).mockImplementation((url: string) =>
+      of(url === '/photo/histogram' ? { luma } : emptyFeed) as any);
+    openCompare();
+
+    const histograms = fixture.debugElement.queryAll(By.directive(HistogramComponent));
+    expect(histograms.map(h => h.componentInstance.path())).toEqual(['/c1.jpg', '/c2.jpg']);
+    for (const histogram of histograms) {
+      expect(histogram.componentInstance.src()).toBe('');
+      expect(histogram.nativeElement.querySelector('svg polygon')).toBeTruthy();
+    }
+    expect(api.get).toHaveBeenCalledWith('/photo/histogram', { path: '/c1.jpg', bins: 64 });
+    expect(api.get).toHaveBeenCalledWith('/photo/histogram', { path: '/c2.jpg', bins: 64 });
+  });
+
+  it('renders no histogram chart or channel controls when stored data is missing', () => {
+    openCompare();
+    const histograms = fixture.debugElement.queryAll(By.directive(HistogramComponent));
+    expect(histograms).toHaveLength(2);
+    for (const histogram of histograms) {
+      expect(histogram.componentInstance.src()).toBe('');
+      expect(histogram.nativeElement.querySelector('svg')).toBeNull();
+      expect(histogram.nativeElement.querySelector('button')).toBeNull();
+    }
+  });
+
+  it('can hide all histograms and shows the matching paths in four-pane mode', () => {
+    const four = { ...group, count: 4, photos: [...group.photos, photo('/c3.jpg'), photo('/c4.jpg')] };
+    component['groups'].set([four]);
+    component['lightboxGroupId'].set(component['groupKey'](four));
+    component['lightboxIndex'].set(0);
+    component['setCompareMode']('4up');
+    fixture.detectChanges();
+    expect(fixture.debugElement.queryAll(By.directive(HistogramComponent))
+      .map(h => h.componentInstance.path())).toEqual(['/c1.jpg', '/c2.jpg', '/c3.jpg', '/c4.jpg']);
+
+    buttonFor('tooltip.histogram')!.click();
+    fixture.detectChanges();
+    expect(fixture.debugElement.queryAll(By.directive(HistogramComponent))).toHaveLength(0);
+    expect(fixture.debugElement.queryAll(By.directive(SyncedZoomComponent))).toHaveLength(4);
+    expect(buttonFor('tooltip.histogram')!.getAttribute('aria-pressed')).toBe('false');
+  });
 
   it('offers a keep and a reject button naming the frame of each pane', () => {
     openCompare();

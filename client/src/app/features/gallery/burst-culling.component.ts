@@ -261,7 +261,8 @@ class RunGeneration {
     ThumbnailUrlPipe,
     FaceThumbnailUrlPipe,
     ImageUrlPipe,
-    SyncedZoomComponent, HistogramComponent,
+    SyncedZoomComponent,
+    HistogramComponent,
     IsKeptPipe,
     IsDecidedPipe,
     IsConfirmedPipe,
@@ -1081,67 +1082,68 @@ class RunGeneration {
                  (keydown)="onDarkroomKeydown($event)">
               @for (photo of compareFrames(); track photo.path) {
                 <div class="flex flex-col w-full h-full min-h-0 rounded overflow-hidden">
-                <div class="relative flex-1 min-h-0 overflow-hidden">
-                  <app-synced-zoom #pane class="w-full h-full min-h-0"
-                                   [src]="photo.path | thumbnailUrl:darkroomThumbSize"
-                                   [fullResSrc]="photo.path | imageUrl:true"
-                                   [zoom]="zoom()"
-                                   [focusPoint]="(photo.path | keySubjectForPath:keySubjectMap())?.center ?? null"
-                                   (zoomChange)="zoom.set($event)"
-                                   [loupeSrc]="photo.path | imageUrl:true"
-                                   [loupeActive]="darkroomLoupeEffective()"
-                                   [loupeZoom]="darkroomLoupeZoom()"
-                                   [alt]="photo.filename" />
-                  <ng-container [ngTemplateOutlet]="frameOverlays"
-                                [ngTemplateOutletContext]="{ path: photo.path }" />
-                  <!-- Every per-frame mark traces the rendered photo, not the
-                       cell: a letterboxed pane put them up to 90px off the image,
-                       where they read as chrome about the pair rather than about
-                       this frame. The focus ring follows for the same reason. -->
-                  <div class="absolute pointer-events-none"
-                       [style.top.px]="pane.fitInsetY()" [style.bottom.px]="pane.fitInsetY()"
-                       [style.left.px]="pane.fitInsetX()" [style.right.px]="pane.fitInsetX()"
-                       [class.ring-2]="photo.path === lbPhoto.path"
-                       [class.ring-inset]="photo.path === lbPhoto.path"
-                       [class.ring-amber-400]="photo.path === lbPhoto.path">
-                    <ng-container [ngTemplateOutlet]="frameState"
-                                  [ngTemplateOutletContext]="{
-                                    kept: (photo.path | isKept:selectionsMap():lbGroup.group_id),
-                                    decided: (photo.path | isDecided:selectionsMap():lbGroup.group_id) }" />
-                    <!-- The ↑ / ↓ keys only ever reach the focused frame, so a
-                         compare grid needs a way to decide the pane the user is
-                         actually looking at. Same write as those keys. -->
-                    <div class="absolute bottom-2 right-2 flex items-center gap-2 pointer-events-auto">
-                      <button type="button"
-                              class="w-7 h-7 rounded-full bg-green-600 inline-flex items-center justify-center shadow transition-opacity hover:opacity-100 cursor-pointer"
-                              [class.opacity-70]="!(photo.path | isKept:selectionsMap():lbGroup.group_id)"
-                              [attr.aria-pressed]="photo.path | isKept:selectionsMap():lbGroup.group_id"
-                              [matTooltip]="I18N.culling.lightbox.keep | translate"
-                              [attr.aria-label]="photo.filename + ', ' + (I18N.culling.lightbox.keep | translate)"
-                              (click)="setPhotoKept(lbGroup, photo.path, true)">
-                        <mat-icon class="!text-base !w-4 !h-4 !leading-4 !text-white">check</mat-icon>
-                      </button>
-                      <button type="button"
-                              class="w-7 h-7 rounded-full bg-red-600 inline-flex items-center justify-center shadow transition-opacity hover:opacity-100 cursor-pointer"
-                              [class.opacity-70]="!(photo.path | isDecided:selectionsMap():lbGroup.group_id)"
-                              [attr.aria-pressed]="photo.path | isDecided:selectionsMap():lbGroup.group_id"
-                              [matTooltip]="I18N.culling.lightbox.reject | translate"
-                              [attr.aria-label]="photo.filename + ', ' + (I18N.culling.lightbox.reject | translate)"
-                              (click)="setPhotoKept(lbGroup, photo.path, false)">
-                        <mat-icon class="!text-base !w-4 !h-4 !leading-4 !text-white">close</mat-icon>
-                      </button>
+                  <div class="relative flex-1 min-h-0 overflow-hidden">
+                    <app-synced-zoom #pane class="w-full h-full min-h-0"
+                                     [src]="photo.path | thumbnailUrl:darkroomThumbSize"
+                                     [fullResSrc]="photo.path | imageUrl:true"
+                                     [zoom]="zoom()"
+                                     [focusPoint]="(photo.path | keySubjectForPath:keySubjectMap())?.center ?? null"
+                                     (zoomChange)="zoom.set($event)"
+                                     [loupeSrc]="photo.path | imageUrl:true"
+                                     [loupeActive]="darkroomLoupeEffective()"
+                                     [loupeZoom]="darkroomLoupeZoom()"
+                                     [alt]="photo.filename" />
+                    <ng-container [ngTemplateOutlet]="frameOverlays"
+                                  [ngTemplateOutletContext]="{ path: photo.path }" />
+                    <!-- Every per-frame mark traces the rendered photo, not the
+                         cell: a letterboxed pane put them up to 90px off the image,
+                         where they read as chrome about the pair rather than about
+                         this frame. The focus ring follows for the same reason. -->
+                    <div class="absolute pointer-events-none"
+                         [style.top.px]="pane.fitInsetY()" [style.bottom.px]="pane.fitInsetY()"
+                         [style.left.px]="pane.fitInsetX()" [style.right.px]="pane.fitInsetX()"
+                         [class.ring-2]="photo.path === lbPhoto.path"
+                         [class.ring-inset]="photo.path === lbPhoto.path"
+                         [class.ring-amber-400]="photo.path === lbPhoto.path">
+                      <ng-container [ngTemplateOutlet]="frameState"
+                                    [ngTemplateOutletContext]="{
+                                      kept: (photo.path | isKept:selectionsMap():lbGroup.group_id),
+                                      decided: (photo.path | isDecided:selectionsMap():lbGroup.group_id) }" />
+                      <!-- The ↑ / ↓ keys only ever reach the focused frame, so a
+                           compare grid needs a way to decide the pane the user is
+                           actually looking at. Same write as those keys. -->
+                      <div class="absolute bottom-2 right-2 flex items-center gap-2 pointer-events-auto">
+                        <button type="button"
+                                class="w-7 h-7 rounded-full bg-green-600 inline-flex items-center justify-center shadow transition-opacity hover:opacity-100 cursor-pointer"
+                                [class.opacity-70]="!(photo.path | isKept:selectionsMap():lbGroup.group_id)"
+                                [attr.aria-pressed]="photo.path | isKept:selectionsMap():lbGroup.group_id"
+                                [matTooltip]="I18N.culling.lightbox.keep | translate"
+                                [attr.aria-label]="photo.filename + ', ' + (I18N.culling.lightbox.keep | translate)"
+                                (click)="setPhotoKept(lbGroup, photo.path, true)">
+                          <mat-icon class="!text-base !w-4 !h-4 !leading-4 !text-white">check</mat-icon>
+                        </button>
+                        <button type="button"
+                                class="w-7 h-7 rounded-full bg-red-600 inline-flex items-center justify-center shadow transition-opacity hover:opacity-100 cursor-pointer"
+                                [class.opacity-70]="!(photo.path | isDecided:selectionsMap():lbGroup.group_id)"
+                                [attr.aria-pressed]="photo.path | isDecided:selectionsMap():lbGroup.group_id"
+                                [matTooltip]="I18N.culling.lightbox.reject | translate"
+                                [attr.aria-label]="photo.filename + ', ' + (I18N.culling.lightbox.reject | translate)"
+                                (click)="setPhotoKept(lbGroup, photo.path, false)">
+                          <mat-icon class="!text-base !w-4 !h-4 !leading-4 !text-white">close</mat-icon>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-                @if (compareHistogramVisible()) {
-                  <div class="shrink-0 bg-neutral-950 px-2 py-1">
-                    <div class="text-white/60 text-[10px] truncate">{{ photo.filename }}</div>
-                    <app-histogram [path]="photo.path" [src]="photo.path | thumbnailUrl:160"
-                                   [height]="48" [showModeToggle]="true"
-                                   [defaultMode]="compareHistogramDefaultMode()"
-                                   [indicatorPercent]="compareClippingIndicatorPercent()" />
-                  </div>
-                }
+                  @if (compareHistogramVisible()) {
+                    <!-- 仅使用照片已保存的测量数据；无曲线时隐藏整个区域，不提供缩略图采样源。 -->
+                    <div class="hidden has-[svg]:block shrink-0 bg-neutral-950 px-2 py-1">
+                      <div class="text-white/60 text-[10px] truncate">{{ photo.filename }}</div>
+                      <app-histogram [path]="photo.path"
+                                     [height]="48" [showModeToggle]="true"
+                                     [defaultMode]="compareHistogramDefaultMode()"
+                                     [indicatorPercent]="compareClippingIndicatorPercent()" />
+                    </div>
+                  }
                 </div>
               }
             </div>
