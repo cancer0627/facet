@@ -29,6 +29,8 @@ import { isTypingContext } from '../../shared/utils/keyboard';
 import { createLoupeState } from '../../shared/utils/loupe-state';
 import { useCoarsePointerSignal } from '../../shared/utils/media-query';
 import { SyncedZoomComponent, ZoomState, FIT_ZOOM } from './synced-zoom.component';
+import { HistogramComponent } from '../../shared/components/histogram/histogram.component';
+import { HistogramMode, isHistogramMode } from '../../shared/utils/histogram';
 import { CompareFiltersService } from '../comparison/compare-filters.service';
 import { PanoramaSettingsService } from '../comparison/panorama-settings.service';
 import { SequenceOverrideService, SequenceKind } from '../../core/services/sequence-override.service';
@@ -259,7 +261,7 @@ class RunGeneration {
     ThumbnailUrlPipe,
     FaceThumbnailUrlPipe,
     ImageUrlPipe,
-    SyncedZoomComponent,
+    SyncedZoomComponent, HistogramComponent,
     IsKeptPipe,
     IsDecidedPipe,
     IsConfirmedPipe,
@@ -904,6 +906,14 @@ class RunGeneration {
                     [matTooltip]="I18N.culling.compare['4up'] | translate"
                     [attr.aria-label]="I18N.culling.compare['4up'] | translate"
                     (click)="setCompareMode('4up')"><mat-icon>grid_view</mat-icon></button>
+            @if (compareMode() !== 'single') {
+              <button mat-icon-button [class.!text-white]="!compareHistogramVisible()"
+                      [class.!text-[var(--mat-sys-primary)]]="compareHistogramVisible()"
+                      [attr.aria-pressed]="compareHistogramVisible()"
+                      [matTooltip]="I18N.tooltip.histogram | translate"
+                      [attr.aria-label]="I18N.tooltip.histogram | translate"
+                      (click)="compareHistogramVisible.set(!compareHistogramVisible())"><mat-icon>bar_chart</mat-icon></button>
+            }
             <button mat-icon-button [class.!text-white]="!peakingActive()"
                     [class.!text-[var(--mat-sys-primary)]]="peakingActive()"
                     [attr.aria-pressed]="peakingActive()"
@@ -1064,13 +1074,14 @@ class RunGeneration {
               }
             </div>
           } @else {
-            <div class="flex-1 grid grid-cols-2 gap-1 overflow-hidden p-1"
+            <div class="flex-1 min-h-0 grid grid-cols-2 gap-1 overflow-hidden p-1"
                  [class.grid-rows-2]="compareMode() === '4up'"
                  role="presentation"
                  (click)="$event.stopPropagation()"
                  (keydown)="onDarkroomKeydown($event)">
               @for (photo of compareFrames(); track photo.path) {
-                <div class="relative w-full h-full min-h-0 rounded overflow-hidden">
+                <div class="flex flex-col w-full h-full min-h-0 rounded overflow-hidden">
+                <div class="relative flex-1 min-h-0 overflow-hidden">
                   <app-synced-zoom #pane class="w-full h-full min-h-0"
                                    [src]="photo.path | thumbnailUrl:darkroomThumbSize"
                                    [fullResSrc]="photo.path | imageUrl:true"
@@ -1121,6 +1132,16 @@ class RunGeneration {
                       </button>
                     </div>
                   </div>
+                </div>
+                @if (compareHistogramVisible()) {
+                  <div class="shrink-0 bg-neutral-950 px-2 py-1">
+                    <div class="text-white/60 text-[10px] truncate">{{ photo.filename }}</div>
+                    <app-histogram [path]="photo.path" [src]="photo.path | thumbnailUrl:160"
+                                   [height]="48" [showModeToggle]="true"
+                                   [defaultMode]="compareHistogramDefaultMode()"
+                                   [indicatorPercent]="compareClippingIndicatorPercent()" />
+                  </div>
+                }
                 </div>
               }
             </div>
@@ -1560,6 +1581,14 @@ export class BurstCullingComponent implements OnDestroy {
 
   /** Compare mode for the darkroom: single view, or a synced 2-up / 4-up grid. */
   protected readonly compareMode = signal<'single' | '2up' | '4up'>('single');
+  protected readonly compareHistogramVisible = signal(true);
+  protected readonly compareHistogramDefaultMode = computed<HistogramMode>(() => {
+    const configured = this.store.config()?.clipping?.histogram_mode;
+    return isHistogramMode(configured) ? configured : 'rgb';
+  });
+  protected readonly compareClippingIndicatorPercent = computed(
+    () => this.store.config()?.clipping?.indicator_percent ?? 1);
+
   /** Pan/zoom transform shared by every compare pane (synced peek). */
   protected readonly zoom = signal<ZoomState>(FIT_ZOOM);
 
@@ -3237,7 +3266,8 @@ export class BurstCullingComponent implements OnDestroy {
 
   protected confirmGroup(group: CullingGroup): boolean {
     const kept = this.selectionsMap().get(group.group_id);
-    if (!kept || kept.size === 0) return false;
+    // An existing empty set is an explicit decision to reject the whole group.
+    if (!kept) return false;
 
     // Grey the group and start the cancellable cooldown; the commit + close only
     // happen when it elapses, so Cancel within the window fully reverts it.
@@ -3522,10 +3552,7 @@ export class BurstCullingComponent implements OnDestroy {
     try {
       const confirmed = this.confirmedGroups();
       const remaining = this.visibleGroups().filter(g => !confirmed.has(this.groupKey(g)));
-      const toConfirm = remaining.filter(g => {
-        const kept = this.selectionsMap().get(g.group_id);
-        return kept && kept.size > 0;
-      });
+      const toConfirm = remaining.filter(g => this.selectionsMap().has(g.group_id));
 
       // Process in batches of 5 to avoid overwhelming the server
       const batchSize = 5;
@@ -3547,12 +3574,6 @@ export class BurstCullingComponent implements OnDestroy {
         });
       }
 
-      const skipped = remaining.filter(g => !toConfirm.includes(g));
-      this.confirmedGroups.update(s => {
-        const next = new Set(s);
-        for (const g of skipped) next.add(this.groupKey(g));
-        return next;
-      });
       this.snackBar.open(this.i18n.t(I18N.culling.confirmed), '', { duration: 2000, horizontalPosition: 'right', verticalPosition: 'bottom' });
     } catch (error: unknown) {
       this.showConfirmationError(error);

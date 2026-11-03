@@ -406,7 +406,34 @@ describe('BurstCullingComponent', () => {
       expect(component['confirmationError']()).toContain(key);
     });
 
-    it('does nothing when no photos are selected', () => {
+    it('commits an explicitly empty selection as reject all after the cooldown', async () => {
+      const group = component['groups']()[0];
+      for (const photo of group.photos) component['setPhotoKept'](group, photo.path, false);
+
+      expect(component['confirmGroup'](group)).toBe(true);
+      expect(mockApi.post).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(7000);
+
+      expect(mockApi.post).toHaveBeenCalledWith('/culling-groups/confirm', {
+        group_id: 1, type: 'burst',
+        paths: ['/photo1.jpg', '/photo2.jpg', '/photo3.jpg'], keep_paths: [],
+      });
+      expect(component['visibleGroups']().some(g => g.group_id === 1)).toBe(false);
+    });
+
+    it('can cancel reject all before the cooldown commits it', async () => {
+      const group = component['groups']()[0];
+      component['selectionsMap'].set(new Map([[group.group_id, new Set<string>()]]));
+      component['confirmGroup'](group);
+      component['cancelPass'](group);
+      await vi.advanceTimersByTimeAsync(7000);
+
+      expect(mockApi.post).not.toHaveBeenCalled();
+      expect(component['confirmedGroups']().has('1_burst')).toBe(false);
+      expect(component['visibleGroups']().some(g => g.group_id === 1)).toBe(true);
+    });
+
+    it('does nothing when no selection entry exists', () => {
       component['selectionsMap'].set(new Map());
       const group = component['groups']()[0];
 
@@ -1374,6 +1401,27 @@ describe('BurstCullingComponent', () => {
         type: 'similar',
         keep_paths: ['/photo4.jpg'],
       }));
+    });
+
+    it('persists reject all alongside groups with keepers', async () => {
+      const group = component['groups']()[0];
+      component['toggleSelection']('/photo1.jpg', group);
+      await component['confirmAllRemaining']();
+
+      expect(mockApi.post).toHaveBeenCalledWith('/culling-groups/confirm', {
+        group_id: 1, type: 'burst',
+        paths: ['/photo1.jpg', '/photo2.jpg', '/photo3.jpg'], keep_paths: [],
+      });
+      expect(mockApi.post).toHaveBeenCalledTimes(2);
+      expect(component['confirmedGroups']().has('1_burst')).toBe(true);
+    });
+
+    it('leaves groups without a selection entry unconfirmed', async () => {
+      component['selectionsMap'].set(new Map());
+      await component['confirmAllRemaining']();
+
+      expect(mockApi.post).not.toHaveBeenCalled();
+      expect(component['confirmedGroups']().size).toBe(0);
     });
 
     it('should mark all groups as confirmed', async () => {
