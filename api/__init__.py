@@ -423,6 +423,8 @@ def create_app() -> FastAPI:
     app.include_router(proofing_router)
     app.include_router(critique_router)
     app.include_router(burst_culling_router)
+    from api.routers.manual_culling import router as manual_culling_router
+    app.include_router(manual_culling_router)
     app.include_router(plugins_router)
     app.include_router(memories_router)
     app.include_router(caption_router)

@@ -2032,7 +2032,8 @@
       "brackets": "包围曝光",
       "panoramas": "全景照片组",
       "hdr_panoramas": "HDR 全景照片组",
-      "tooltip": "选择要复核的近似重复照片分组类型"
+      "tooltip": "选择要复核的近似重复照片分组类型",
+      "manual": "手动"
     },
     "darkroom_tooltip": "打开全屏暗房，对比照片并选出要保留的作品",
     "cull_style": {
@@ -2079,6 +2080,14 @@
       "rerun_done": "检测完成，请重新加载以查看新标签",
       "rerun_failed": "无法运行检测",
       "rerun_busy": "另一个照片库任务正在运行，请等其完成后再试"
+    },
+    "manual": {
+      "add": "新建选片组",
+      "group_name": "手动选片组",
+      "bounds": "请逐张勾选 2～500 张照片，不支持“选择整个筛选结果”。",
+      "fresh_review": "请重新选择保留照片",
+      "save_error": "新建选片组失败，请重试。",
+      "saved": "已新建选片组，请重新选择保留照片"
     }
   },
   "scenes": {

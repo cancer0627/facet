@@ -1349,6 +1349,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/culling-groups/manual": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Manual Group */
+        post: operations["save_manual_group_api_culling_groups_manual_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/culling-groups/override_sequence": {
         parameters: {
             query?: never;
@@ -5093,7 +5110,7 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "burst" | "similar" | "scene" | "bracket" | "panorama" | "hdr_panorama";
+            type: "burst" | "similar" | "scene" | "bracket" | "panorama" | "hdr_panorama" | "manual";
         };
         /** CullingFacesBody */
         CullingFacesBody: {
@@ -5388,6 +5405,11 @@ export interface components {
             user?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** ManualGroupBody */
+        ManualGroupBody: {
+            /** Paths */
+            paths: string[];
         };
         /** MapCluster */
         MapCluster: {
@@ -9461,6 +9483,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CullingConfirmBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_manual_group_api_culling_groups_manual_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManualGroupBody"];
             };
         };
         responses: {

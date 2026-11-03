@@ -2679,7 +2679,8 @@ def process_bursts(db_path, config_path=None):
             "(SELECT ls.learned_score FROM learned_scores ls "
             " WHERE ls.photo_path = photos.path AND ls.user_id IS NULL "
             " AND ls.category IS NULL) AS learned_score "
-            "FROM photos WHERE phash IS NOT NULL ORDER BY date_taken"
+            "FROM photos WHERE phash IS NOT NULL "
+            "AND (burst_group_id IS NULL OR burst_group_id >= 0) ORDER BY date_taken"
         ).fetchall()
         if not photos:
             return
@@ -2694,11 +2695,14 @@ def process_bursts(db_path, config_path=None):
             for row in face_data:
                 photo_persons.setdefault(row['photo_path'], set()).add(row['person_id'])
 
+        # Negative IDs are manual groups: preserve their members, leads and review state.
         # Reset only photos with phash (ones that will be processed for bursts)
         # Photos without phash are kept as NULL or set to 1 (standalone)
-        conn.execute("UPDATE photos SET is_burst_lead = 0 WHERE phash IS NOT NULL")
+        conn.execute("UPDATE photos SET is_burst_lead = 0 WHERE phash IS NOT NULL "
+                     "AND (burst_group_id IS NULL OR burst_group_id >= 0)")
         # Mark photos without phash as standalone (they weren't part of burst detection)
-        conn.execute("UPDATE photos SET is_burst_lead = 1 WHERE phash IS NULL")
+        conn.execute("UPDATE photos SET is_burst_lead = 1 WHERE phash IS NULL "
+                     "AND (burst_group_id IS NULL OR burst_group_id >= 0)")
 
         def phash_distance(hash1, hash2):
             """Compute hamming distance between two hex phash strings."""
@@ -2747,7 +2751,8 @@ def process_bursts(db_path, config_path=None):
             return False
 
         # Reset burst_group_id (but preserve burst_reviewed for already-reviewed groups)
-        conn.execute("UPDATE photos SET burst_group_id = NULL WHERE phash IS NOT NULL")
+        conn.execute("UPDATE photos SET burst_group_id = NULL WHERE phash IS NOT NULL "
+                     "AND (burst_group_id IS NULL OR burst_group_id >= 0)")
 
         current_burst = [photos[0]]
         group_id = 0

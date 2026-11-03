@@ -169,7 +169,7 @@ function readStoredFaceSize(): number {
     : FACE_SIZE_DEFAULT_PX;
 }
 const GROUP_BY_VALUES = ['all', 'burst', 'similar', 'scene', 'bracket',
-                         'panorama', 'hdr_panorama'] as const;
+                         'panorama', 'hdr_panorama', 'manual'] as const;
 type GroupBy = typeof GROUP_BY_VALUES[number];
 // Sets whose frames were shot to be combined: kept whole by default, and
 // never a source of comparison pairs.
@@ -329,7 +329,7 @@ class RunGeneration {
                something CSS can ask -- the toolbar renders twice (inline and
                projected into the shell header), so no single element measurement
                would answer for both. -->
-          <div class="flex flex-nowrap items-center gap-3 md:gap-4 min-w-0 flex-1 overflow-x-auto
+          <div class="flex flex-nowrap items-center gap-3 md:gap-4 min-w-0 flex-1 overflow-x-auto overflow-y-hidden
                       [mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)]">
             @if (scoped()) {
               <button mat-icon-button (click)="exitScope()"
@@ -386,6 +386,10 @@ class RunGeneration {
               <button mat-menu-item (click)="onGroupByChange('all')">
                 <mat-icon>{{ 'all' | cullGroupIcon }}</mat-icon>
                 <span [class.font-bold]="groupBy() === 'all'">{{ I18N.culling.group_by.all | translate }}</span>
+              </button>
+              <button mat-menu-item (click)="onGroupByChange('manual')">
+                <mat-icon>library_add</mat-icon>
+                <span>{{ 'culling.group_by.manual' | translate }}</span>
               </button>
               <button mat-menu-item (click)="onGroupByChange('burst')">
                 <mat-icon>{{ 'burst' | cullGroupIcon }}</mat-icon>
@@ -527,14 +531,14 @@ class RunGeneration {
             </mat-slider>
           }
           @if (auth.isEdition() && !keepWholeGranularity()) {
-            <button mat-icon-button class="shrink-0" (click)="openAutoCull()" [disabled]="autoCullBusy()"
+            <button mat-icon-button class="shrink-0" (click)="openAutoCull()" [disabled]="autoCullBusy() || groupBy() === 'manual'"
                     [matTooltip]="I18N.culling.auto_cull.tooltip | translate"
                     [attr.aria-label]="I18N.culling.auto_cull.button | translate">
               <mat-icon>auto_fix_high</mat-icon>
             </button>
           }
           @if (unconfirmedCount() > 0) {
-            <button mat-flat-button (click)="confirmAllRemaining()" [disabled]="confirming()" class="!hidden lg:!inline-flex !rounded-md shrink-0">
+            <button mat-flat-button (click)="confirmAllRemaining()" [disabled]="confirming() || confirmableCount() === 0" class="!hidden lg:!inline-flex !rounded-md shrink-0">
               <mat-icon>done_all</mat-icon>
               {{ I18N.culling.confirm_all | translate }} ({{ unconfirmedCount() }})
             </button>
@@ -732,6 +736,10 @@ class RunGeneration {
                 <mat-icon class="inline-flex !text-base !w-4 !h-4 !leading-4 opacity-60"
                           [matTooltip]="group.type | cullGroupLabel | translate"
                           [attr.aria-label]="group.type | cullGroupLabel | translate">{{ group.type | cullGroupIcon }}</mat-icon>
+                @if (group.type === 'manual') {
+                  <span class="text-xs font-medium">{{ 'culling.manual.group_name' | translate }}</span>
+                  <span class="text-xs opacity-60">{{ 'culling.manual.fresh_review' | translate }}</span>
+                }
                 <span class="text-xs opacity-50">{{ group.count }} {{ I18N.culling.photos | translate }}</span>
                 @if (group.category; as category) {
                   @if (comparisonStats(); as stats) {
@@ -812,7 +820,7 @@ class RunGeneration {
                             [attr.aria-label]="I18N.culling.skip | translate">
                       <mat-icon>skip_next</mat-icon>
                     </button>
-                    <button mat-icon-button (click)="confirmGroup(group)" [disabled]="confirming()"
+                    <button mat-icon-button (click)="confirmGroup(group)" [disabled]="confirming() || !selectionsMap().has(group.group_id)"
                             [matTooltip]="I18N.culling.confirm_tooltip | translate"
                             [attr.aria-label]="I18N.culling.confirm | translate">
                       <mat-icon>check_circle</mat-icon>
@@ -840,7 +848,7 @@ class RunGeneration {
            its height (max-lg:mb-16) to avoid stacking under the fixed icon bar. -->
       @if (unconfirmedCount() > 0) {
         <div class="lg:!hidden shrink-0 flex justify-center py-1.5 max-lg:mb-14 border-t border-[var(--mat-sys-outline-variant)] bg-[var(--mat-sys-surface)]">
-          <button mat-flat-button (click)="confirmAllRemaining()" [disabled]="confirming()" class="!px-6 !rounded-md !h-9">
+          <button mat-flat-button (click)="confirmAllRemaining()" [disabled]="confirming() || confirmableCount() === 0" class="!px-6 !rounded-md !h-9">
             <mat-icon>done_all</mat-icon>
             {{ I18N.culling.confirm_all | translate }} ({{ unconfirmedCount() }})
           </button>
@@ -2335,6 +2343,7 @@ export class BurstCullingComponent implements OnDestroy {
   private autoSelectBest(groups: CullingGroup[], base?: Map<number, Set<string>>): Map<number, Set<string>> {
     const map = base ? new Map(base) : new Map<number, Set<string>>();
     for (const group of groups) {
+      if (group.type === 'manual') continue;
       if (!map.has(group.group_id)) {
         const kept = this.computeAutoKeep(group);
         if (kept.size > 0) {
@@ -2411,7 +2420,7 @@ export class BurstCullingComponent implements OnDestroy {
     const confirmed = this.confirmedGroups();
     const map = new Map<number, Set<string>>();
     for (const group of this.groups()) {
-      if (confirmed.has(this.groupKey(group))) {
+      if (group.type === 'manual' || confirmed.has(this.groupKey(group))) {
         const existing = this.selectionsMap().get(group.group_id);
         if (existing) map.set(group.group_id, existing);
         continue;
@@ -3052,7 +3061,7 @@ export class BurstCullingComponent implements OnDestroy {
   /** Request body for POST /culling/auto, reusing the page's scope + strictness. */
   private autoCullBody(dryRun: boolean, highlightsAlbum: string): AutoCullRequest {
     const body: AutoCullRequest = {
-      group_by: this.groupBy(),
+      group_by: this.groupBy() === 'manual' ? 'all' : this.groupBy(),
       strictness: this.strictness(),
       dry_run: dryRun,
       highlights_album: highlightsAlbum,
@@ -3109,7 +3118,7 @@ export class BurstCullingComponent implements OnDestroy {
    * a snapshot the newer run is about to replace.
    */
   protected async openAutoCull(): Promise<AutoCullRunOutcome> {
-    if (this.autoCullApplying()) return 'superseded';
+    if (this.autoCullApplying() || this.groupBy() === 'manual') return 'superseded';
     // Only a fresh open clears the notices: the re-runs that raise them come back
     // through here, and clearing unconditionally would erase them on the way in —
     // including the re-run of a dry run whose preview has not landed yet.
@@ -3313,7 +3322,7 @@ export class BurstCullingComponent implements OnDestroy {
       if (http.status === 0) reasonKey = keys.network;
       else if (http.status === 401) reasonKey = keys.auth;
       else if (http.status === 403) reasonKey = keys.forbidden;
-      else if (http.status === 404 || detail?.startsWith('Paths not in ')) reasonKey = keys.group_changed;
+      else if (http.status === 404 || http.status === 409 || detail?.startsWith('Paths not in ')) reasonKey = keys.group_changed;
       else if (http.status === 400 || http.status === 422) reasonKey = keys.invalid;
       else if (http.status === 429) reasonKey = keys.rate_limited;
       else if (http.status >= 500) reasonKey = keys.server;
@@ -3548,6 +3557,11 @@ export class BurstCullingComponent implements OnDestroy {
     this.hiddenGroups.set(new Set());
     for (const commit of pendingCommits) commit();
   }
+
+  protected readonly confirmableCount = computed(() => this.visibleGroups().filter(
+    group => !this.confirmedGroups().has(this.groupKey(group))
+      && this.selectionsMap().has(group.group_id),
+  ).length);
 
   protected async confirmAllRemaining(): Promise<void> {
     this.confirming.set(true);

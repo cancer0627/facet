@@ -90,6 +90,7 @@ def compute_similarity_groups(conn=None, threshold=None, min_size=None, user_id=
         # init_database() migration (api/__init__.py:lifespan).
         where = [
             "clip_embedding IS NOT NULL",
+            "(burst_group_id IS NULL OR burst_group_id >= 0)",
             HIDE_BURSTS_SQL,
             "(similarity_reviewed IS NULL OR similarity_reviewed = 0)",
             vis_sql,

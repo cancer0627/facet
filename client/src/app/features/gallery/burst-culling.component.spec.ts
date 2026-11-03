@@ -89,6 +89,45 @@ describe('BurstCullingComponent', () => {
     component.ngOnDestroy();
   });
 
+  describe('fresh manual culling groups', () => {
+    async function loadManual(): Promise<void> {
+      mockApi.get.mockReturnValue(of({
+        ...mockCullingGroupsResponse,
+        groups: [{ ...mockCullingGroupsResponse.groups[0], group_id: -1, type: 'manual' }],
+        total_groups: 1,
+      }));
+      await (component as any).loadGroups();
+    }
+
+    it('starts without any keep choice and cannot confirm an untouched group', async () => {
+      await loadManual();
+      const group = component['groups']()[0];
+      expect(component['selectionsMap']().has(-1)).toBe(false);
+      expect(component['confirmGroup'](group)).toBe(false);
+      expect(mockApi.post).not.toHaveBeenCalled();
+    });
+
+    it('preserves an explicit choice when strictness changes', async () => {
+      await loadManual();
+      const group = component['groups']()[0];
+      component['toggleSelection']('/photo2.jpg', group);
+      component['onStrictnessChange'](100);
+      expect([...component['selectionsMap']().get(-1)!]).toEqual(['/photo2.jpg']);
+    });
+
+    it('does not auto-select manual groups when strictness changes', async () => {
+      await loadManual();
+      component['onStrictnessChange'](0);
+      expect(component['selectionsMap']().has(-1)).toBe(false);
+    });
+
+    it('blocks automatic culling while viewing manual groups', async () => {
+      component['groupBy'].set('manual');
+      await component['openAutoCull']();
+      expect(mockApi.post).not.toHaveBeenCalled();
+    });
+  });
+
   describe('initial state', () => {
     it('should have loading as a signal function', () => {
       expect(typeof component['loading']).toBe('function');

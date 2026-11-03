@@ -104,7 +104,7 @@ class SimilarSelectionBody(BaseModel):
 
 class CullingConfirmBody(BaseModel):
     group_id: int
-    type: Literal['burst', 'similar', 'scene', 'bracket', 'panorama', 'hdr_panorama']
+    type: Literal['burst', 'similar', 'scene', 'bracket', 'panorama', 'hdr_panorama', 'manual']
     # Non-empty for every feed type: `select_burst_photos` and
     # `select_similar_photos` operate on the whole named group, so an empty
     # `paths` here would leave an empty `keep_paths` rejecting everything in
@@ -484,7 +484,7 @@ def _query_burst_groups(conn, vis_sql, vis_params, page=None, per_page=None, exc
 
     if exclude_rejected:
         from_clause, from_params, is_rejected_col = _rejected_clause(user_id)
-        sel_where = (f"burst_group_id IS NOT NULL AND burst_reviewed = 0 "
+        sel_where = (f"burst_group_id >= 0 AND burst_reviewed = 0 "
                      f"AND {vis_sql} AND {is_rejected_col} = 0{sel_sql}")
         sel_base_params = from_params + vis_params + sel_params
         count_row = conn.execute(
@@ -496,7 +496,7 @@ def _query_burst_groups(conn, vis_sql, vis_params, page=None, per_page=None, exc
         order_sql = (f"SELECT burst_group_id FROM {from_clause} WHERE {sel_where} "
                      f"GROUP BY burst_group_id HAVING COUNT(*) >= 2 ORDER BY burst_group_id")
     else:
-        sel_where = f"burst_group_id IS NOT NULL AND burst_reviewed = 0 AND {vis_sql}{sel_sql}"
+        sel_where = f"burst_group_id >= 0 AND burst_reviewed = 0 AND {vis_sql}{sel_sql}"
         sel_base_params = vis_params + sel_params
         count_row = conn.execute(
             f"SELECT COUNT(DISTINCT burst_group_id) as cnt FROM photos WHERE {sel_where}",
@@ -1117,7 +1117,7 @@ def _fetch_unreviewed_similar_groups(conn, threshold, vis_sql, vis_params, seed,
 
 _CULLING_SORTS = ('easiest', 'redundant', 'best', 'recent', 'needs_comparisons', 'chronological')
 _CULLING_GROUP_BY = ('all', 'burst', 'similar', 'scene', 'bracket',
-                     'panorama', 'hdr_panorama')
+                     'panorama', 'hdr_panorama', 'manual')
 
 # Natural direction of each sort mode. Every mode ranks largest-first except
 # `chronological`, which walks the shoot forward in time -- the order a
@@ -1464,7 +1464,10 @@ async def api_culling_groups(
                 from api.routers.albums import _check_album_access
                 _check_album_access(conn, album_id, user_id)
 
-            if group_by == 'scene':
+            if group_by == 'manual':
+                from api.routers.manual_culling import fetch_manual_groups
+                all_groups = fetch_manual_groups(conn, user, album_id, date_from, date_to)
+            elif group_by == 'scene':
                 # Scenes carry their own stats_cache; bypass the burst/similar memo
                 # and stay chronological (sort is ignored for this mode).
                 all_groups = _fetch_scene_groups(
@@ -1554,6 +1557,18 @@ async def api_culling_groups(
                         _culling_groups_cache.clear()
                     _culling_groups_cache[cache_key] = (now, all_groups)
 
+            if group_by == 'all':
+                from api.routers.manual_culling import fetch_manual_groups
+                all_groups = list(all_groups) + fetch_manual_groups(
+                    conn, user, album_id, date_from, date_to)
+            if group_by in ('all', 'manual'):
+                cat_needs, default_need = ({}, 0)
+                if sort == 'needs_comparisons':
+                    cat_needs, default_need = _category_comparison_needs(conn)
+                all_groups = sorted(all_groups, key=lambda g: _culling_sort_key(
+                    g, sort, cat_needs, default_need), reverse=_culling_sort_reverse(sort, direction))
+                if sort == 'chronological':
+                    _order_group_photos_by_capture(all_groups)
             total_groups = len(all_groups)
             total_pages, offset = paginate(total_groups, page, per_page)
             page_groups = all_groups[offset:offset + per_page]
@@ -1751,6 +1766,9 @@ async def confirm_culling_group(
 
 
 async def _dispatch_culling_confirm(body, user):
+    if body.type == 'manual':
+        from api.routers.manual_culling import confirm_manual_group
+        return await asyncio.to_thread(confirm_manual_group, body, user)
     user_id = user.user_id if user else None
     # A declared sequence kind still routes on its own, so a set reached through
     # its own granularity keeps the existing "paths outside the set are skipped"

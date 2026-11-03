@@ -9,6 +9,7 @@ import { I18N_KEYS } from '../../core/i18n/keys';
 export type SheetAction =
   | { kind: 'favorite' }
   | { kind: 'reject' }
+  | { kind: 'culling-group' }
   | { kind: 'invert' }
   | { kind: 'compare' }
   | { kind: 'export' }
@@ -29,6 +30,7 @@ export interface GalleryActionsSheetData {
   downloadProfiles: string[];
   /** Whether the selection size is within the compare surface's pane bounds. */
   canCompare: boolean;
+  canGroup?: boolean;
   /** Gates the delete entry -- `_cull_capabilities.trash_available`, never the
    *  raw `allow_trash` flag (a button gated on that alone would 400 on an
    *  install where the flag is on but `send2trash` isn't installed). */
@@ -47,6 +49,11 @@ export interface GalleryActionsSheetData {
       </div>
 
       @if (data.isEdition) {
+        <button class="flex items-center gap-3 w-full px-4 py-3 text-sm text-left hover:bg-white/10 cursor-pointer disabled:opacity-40"
+                [disabled]="!data.canGroup" (click)="pick({ kind: 'culling-group' })">
+          <mat-icon aria-hidden="true">library_add</mat-icon>
+          {{ 'culling.manual.add' | translate }}
+        </button>
         <button class="flex items-center gap-3 w-full px-4 py-3 text-sm text-left hover:bg-white/10 cursor-pointer" (click)="pick({ kind: 'favorite' })">
           <mat-icon aria-hidden="true">favorite</mat-icon>
           {{ I18N.gallery.selection.favorite | translate }}

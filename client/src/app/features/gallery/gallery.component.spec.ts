@@ -197,6 +197,54 @@ describe('GalleryComponent', () => {
     (component as unknown as { onGridKeydown(e: KeyboardEvent): void }).onGridKeydown(ev);
   }
 
+  describe('create manual culling group', () => {
+    function select(paths: string[]): void {
+      (mockAuth['isEdition'] as Mock).mockReturnValue(true);
+      mockStore.selectedPaths.set(new Set(paths));
+      mockStore.selectionCount.set(paths.length);
+    }
+
+    it('creates directly from selected photos and opens manual culling without a dialog', async () => {
+      select(['/a.jpg', '/b.jpg']);
+      mockApi.post.mockReturnValue(of({ group_id: -1, count: 2 }));
+      const navigate = vi.spyOn((component as any).router, 'navigate').mockResolvedValue(true);
+      await (component as any).addToCullingGroup();
+      expect(mockApi.post).toHaveBeenCalledWith('/culling-groups/manual', { paths: ['/a.jpg', '/b.jpg'] });
+      expect(TestBed.inject(MatDialog).open).not.toHaveBeenCalled();
+      expect(mockStore.clearSelection).toHaveBeenCalled();
+      expect(navigate).toHaveBeenCalledWith(['/culling'], { queryParams: { group_by: 'manual' } });
+    });
+
+    it('preserves the selection on failure', async () => {
+      select(['/a.jpg', '/b.jpg']);
+      mockApi.post.mockReturnValue(throwError(() => new Error('failed')));
+      await (component as any).addToCullingGroup();
+      expect(mockStore.clearSelection).not.toHaveBeenCalled();
+      expect((component as any).creatingCullingGroup()).toBe(false);
+    });
+
+    it('blocks duplicate clicks while creation is pending', async () => {
+      select(['/a.jpg', '/b.jpg']);
+      const pending = new Subject<unknown>();
+      mockApi.post.mockReturnValue(pending);
+      vi.spyOn((component as any).router, 'navigate').mockResolvedValue(true);
+      const first = (component as any).addToCullingGroup();
+      await (component as any).addToCullingGroup();
+      expect(mockApi.post).toHaveBeenCalledTimes(1);
+      pending.next({ group_id: -1 }); pending.complete();
+      await first;
+    });
+
+    it('requires 2 to 500 explicit selections', async () => {
+      select(['/a.jpg']);
+      await (component as any).addToCullingGroup();
+      select(['/a.jpg', '/b.jpg']);
+      mockStore.viewScopeSelected.set(true);
+      await (component as any).addToCullingGroup();
+      expect(mockApi.post).not.toHaveBeenCalled();
+    });
+  });
+
   describe('ScoreClassPipe', () => {
     let pipe: ScoreClassPipe;
 

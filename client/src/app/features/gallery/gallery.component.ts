@@ -573,6 +573,11 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
           </button>
           @if (auth.isEdition()) {
             <button mat-button class="!hidden lg:!inline-flex" (click)="batchFavorite()"><mat-icon>favorite</mat-icon> {{ I18N.gallery.selection.favorite | translate }}</button>
+            <button mat-button class="!hidden lg:!inline-flex" (click)="addToCullingGroup()"
+                    [disabled]="viewScoped() || selectionCount() < 2 || selectionCount() > 500 || creatingCullingGroup()"
+                    [matTooltip]="'culling.manual.bounds' | translate">
+              <mat-icon>library_add</mat-icon> {{ 'culling.manual.add' | translate }}
+            </button>
             <button mat-button class="!hidden lg:!inline-flex" (click)="batchReject()"><mat-icon>thumb_down</mat-icon> {{ I18N.gallery.selection.reject | translate }}</button>
             <button mat-button class="!hidden lg:!inline-flex" [matMenuTriggerFor]="rateMenu"><mat-icon>star</mat-icon> {{ I18N.gallery.selection.rate | translate }}</button>
             <mat-menu #rateMenu="matMenu">
@@ -1281,6 +1286,26 @@ export class GalleryComponent implements OnInit, OnDestroy {
     () => this.selectionCount() >= 2 && this.selectionCount() <= MAX_COMPARE_PANES,
   );
 
+  protected readonly creatingCullingGroup = signal(false);
+
+  protected async addToCullingGroup(): Promise<void> {
+    if (!this.auth.isEdition() || this.viewScoped() || this.creatingCullingGroup()
+        || this.selectionCount() < 2 || this.selectionCount() > 500) return;
+    const paths = [...this.selectedPaths()];
+    if (paths.length < 2 || paths.length > 500) return;
+    this.creatingCullingGroup.set(true);
+    try {
+      await firstValueFrom(this.api.post('/culling-groups/manual', { paths }));
+      this.clearSelection();
+      this.snackBar.open(this.i18n.t('culling.manual.saved'), '', { duration: 3000 });
+      await this.router.navigate(['/culling'], { queryParams: { group_by: 'manual' } });
+    } catch {
+      this.snackBar.open(this.i18n.t('culling.manual.save_error'), '', { duration: 5000 });
+    } finally {
+      this.creatingCullingGroup.set(false);
+    }
+  }
+
   protected async compareSelection(): Promise<void> {
     const selected = new Set(this.store.selectedLoadedPaths());
     // Keep the grid's order rather than selection order: comparing left-to-right
@@ -1530,6 +1555,7 @@ export class GalleryComponent implements OnInit, OnDestroy {
         albums: this.albumOptions(),
         downloadProfiles: this.auth.downloadProfiles(),
         canCompare: this.canCompareSelection(),
+        canGroup: !this.viewScoped() && this.selectionCount() >= 2 && this.selectionCount() <= 500 && !this.creatingCullingGroup(),
         trashAvailable: this.store.config()?.cull?.trash_available ?? false,
       },
     });
@@ -1538,6 +1564,7 @@ export class GalleryComponent implements OnInit, OnDestroy {
     switch (action.kind) {
       case 'favorite': await this.batchFavorite(); break;
       case 'reject': await this.batchReject(); break;
+      case 'culling-group': await this.addToCullingGroup(); break;
       case 'rate': await this.batchRate(action.rating); break;
       case 'album': await this.addToAlbum(action.albumId); break;
       case 'create-album': await this.createAlbumAndAdd(); break;

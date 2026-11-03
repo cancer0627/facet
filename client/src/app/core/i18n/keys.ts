@@ -2049,6 +2049,7 @@ export const I18N = {
       panoramas: "culling.group_by.panoramas",
       hdr_panoramas: "culling.group_by.hdr_panoramas",
       tooltip: "culling.group_by.tooltip",
+      manual: "culling.group_by.manual",
     },
     darkroom_tooltip: "culling.darkroom_tooltip",
     cull_style: {
@@ -2095,6 +2096,14 @@ export const I18N = {
       rerun_done: "culling.panorama.rerun_done",
       rerun_failed: "culling.panorama.rerun_failed",
       rerun_busy: "culling.panorama.rerun_busy",
+    },
+    manual: {
+      add: "culling.manual.add",
+      group_name: "culling.manual.group_name",
+      bounds: "culling.manual.bounds",
+      fresh_review: "culling.manual.fresh_review",
+      save_error: "culling.manual.save_error",
+      saved: "culling.manual.saved",
     },
   },
   scenes: {

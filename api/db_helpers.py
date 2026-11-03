@@ -225,6 +225,7 @@ def hide_bursts_sql(table_alias: str = '') -> str:
     they would vanish from the gallery.
     """
     p = f"{table_alias}." if table_alias else ""
+    # Negative IDs denote manual groups, whose undecided photos must remain visible.
     # `is_sequence_lead` is exempted because the two hide clauses are ANDed and
     # pick their representative on unrelated criteria: the burst lead is
     # score-ranked, the panorama lead is the middle frame by capture. A sweep is
@@ -232,7 +233,7 @@ def hide_bursts_sql(table_alias: str = '') -> str:
     # both ship on -- the two clauses could agree on no frame at all and the
     # whole set vanished from the gallery.
     return (f"({p}is_burst_lead = 1 OR {p}is_burst_lead IS NULL "
-            f"OR {p}burst_group_id IS NULL OR {p}is_sequence_lead = 1)")
+            f"OR {p}burst_group_id IS NULL OR {p}burst_group_id < 0 OR {p}is_sequence_lead = 1)")
 
 
 def hide_duplicates_sql(table_alias: str = '') -> str:
@@ -246,7 +247,7 @@ HIDE_BLINKS_SQL = "(is_blink = 0 OR is_blink IS NULL)"
 HIDE_BURSTS_SQL = hide_bursts_sql()
 HIDE_DUPLICATES_SQL = hide_duplicates_sql()
 HIDDEN_BURST_SQL = (
-    "(is_burst_lead = 0 AND burst_group_id IS NOT NULL "
+    "(is_burst_lead = 0 AND burst_group_id >= 0 "
     "AND (is_sequence_lead IS NULL OR is_sequence_lead = 0))")
 HIDDEN_DUPLICATE_SQL = "(is_duplicate_lead = 0 AND duplicate_group_id IS NOT NULL)"
 
