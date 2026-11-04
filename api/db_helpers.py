@@ -419,6 +419,7 @@ PHOTO_OPTIONAL_COLS = [
     'vcg_suitability_score', 'vcg_submission_score',
     'qrealign_score', 'aesthetic_v25', 'deqa_score',
     'subject_sharpness', 'subject_prominence', 'subject_placement', 'bg_separation',
+    'bird_sharpness', 'bird_count', 'bird_status', 'bird_version',
     'star_rating', 'is_favorite', 'is_rejected',
     'duplicate_group_id', 'is_duplicate_lead',
     'burst_group_id',
@@ -768,6 +769,15 @@ def sanitize_float_values(data):
     return data
 
 
+def current_bird_score_sql():
+    """旧版数值留在数据库中供追溯，但不与当前标尺混排。"""
+    from models.bird_detector import RESULT_VERSION_PREFIX
+
+    prefix = RESULT_VERSION_PREFIX
+    return (f"(CASE WHEN substr(photos.bird_version,1,{len(prefix)})='{prefix}' "
+            "THEN photos.bird_sharpness END)")
+
+
 def build_photo_select_columns(conn, user_id=None):
     """Build the SELECT column list for photo queries.
 
@@ -790,8 +800,17 @@ def build_photo_select_columns(conn, user_id=None):
         if c in existing_cols and c not in skip_cols:
             if c in pref_col_names:
                 select_cols.append(f"{pref_cols[c]} as {c}")
+            elif c == 'bird_sharpness' and 'bird_version' in existing_cols:
+                select_cols.append(f'{current_bird_score_sql()} AS bird_sharpness')
             else:
                 select_cols.append(c)
+    if 'bird_version' in existing_cols:
+        from models.bird_detector import RESULT_VERSION_PREFIX
+        prefix = RESULT_VERSION_PREFIX
+        select_cols.append(
+            f"CASE WHEN bird_version IS NOT NULL AND substr(bird_version,1,{len(prefix)})!='{prefix}' "
+            'THEN 1 ELSE 0 END AS bird_score_outdated'
+        )
     select_cols.append(SEQUENCE_OVERRIDE_SELECT)
     select_cols.append(SEQUENCE_OVERRIDE_PENDING_SELECT)
     return select_cols

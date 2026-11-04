@@ -37,6 +37,11 @@ export interface Photo {
   deqa_score?: number | null;
   // Subject saliency
   subject_sharpness?: number | null;
+  bird_sharpness?: number | null;
+  bird_count?: number | null;
+  bird_status?: string | null;
+  bird_version?: string | null;
+  bird_score_outdated?: number | null;
   subject_prominence?: number | null;
   subject_placement?: number | null;
   bg_separation?: number | null;

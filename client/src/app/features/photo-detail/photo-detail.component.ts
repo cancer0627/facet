@@ -40,6 +40,7 @@ import { createLeafletMap } from '../../shared/leaflet';
 import { I18N, I18N_KEYS } from '../../core/i18n/keys';
 import { isTypingContext } from '../../shared/utils/keyboard';
 import type { CategoryOverrideResult } from './category-override-dialog.component';
+import { BirdResultsComponent } from './bird-results.component';
 
 const SOCIAL_SOURCE_KEYS: Record<string, string> = {
   saliency: I18N.social_export.source.saliency,
@@ -72,6 +73,7 @@ const SOCIAL_SOURCE_KEYS: Record<string, string> = {
     EvOffsetPipe,
     HistogramComponent,
     ComparisonCategoryExplainerComponent,
+    BirdResultsComponent,
   ],
   template: `
     @if (photo(); as p) {
@@ -243,6 +245,7 @@ const SOCIAL_SOURCE_KEYS: Record<string, string> = {
           </div>
 
           <!-- Category explainer: "why isn't this photo classified as X?" -->
+          <app-bird-results [path]="p.path" />
           @if (auth.isEdition()) {
             <div class="border-t border-[var(--mat-sys-outline-variant)] pt-3">
               <button mat-button class="!px-0 !min-w-0" (click)="toggleExplainer()">

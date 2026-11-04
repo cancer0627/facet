@@ -1192,6 +1192,7 @@ async def get_shared_album(
                 'min_leading_lines', 'max_leading_lines',
                 'min_isolation', 'max_isolation',
                 'min_subject_sharpness', 'max_subject_sharpness',
+                'min_bird_sharpness', 'max_bird_sharpness',
                 'min_subject_prominence', 'max_subject_prominence',
                 'min_subject_placement', 'max_subject_placement',
                 'min_bg_separation', 'max_bg_separation',

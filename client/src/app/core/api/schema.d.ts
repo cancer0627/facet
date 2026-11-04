@@ -386,6 +386,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/birds/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Bird Job */
+        post: operations["start_bird_job_api_birds_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/birds/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Bird Job Status */
+        get: operations["bird_job_status_api_birds_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/birds/jobs/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Bird Job */
+        post: operations["cancel_bird_job_api_birds_jobs__job_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/birds/photo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Bird Photo */
+        get: operations["bird_photo_api_birds_photo_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/birds/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Bird Preview */
+        get: operations["bird_preview_api_birds_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/burst-groups": {
         parameters: {
             query?: never;
@@ -745,6 +830,26 @@ export interface paths {
         get: operations["api_comparison_next_pair_api_comparison_next_pair_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/comparison/override_categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Api Comparison Override Categories
+         * @description 批量保存人工分类并同步总分；任一照片不可见或写入失败时整体回滚。
+         */
+        post: operations["api_comparison_override_categories_api_comparison_override_categories_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1146,11 +1251,12 @@ export interface paths {
          * @description Get AI critique for a photo's score.
          *
          *     Modes:
+         *       - combined: Generate missing critique and suggestions in one model call.
          *       - rule: Fast rule-based analysis (always available)
          *       - vlm: VLM-powered natural language critique (requires GPU + a profile
          *         with a VLM tagging model). The generated text is cached per photo;
-         *         ``refresh=true`` regenerates it. When ``lang`` matches the configured
-         *         ``translation.target_language``, the critique is translated.
+         *         ``refresh=true`` regenerates it. The generated response follows the
+         *         requested viewer language in ``lang``.
          */
         get: operations["api_critique_api_critique_get"];
         put?: never;
@@ -3993,6 +4099,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Background Tasks */
+        get: operations["background_tasks_api_tasks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/timeline": {
         parameters: {
             query?: never;
@@ -4569,6 +4692,52 @@ export interface components {
             /** Face Id */
             face_id: number;
         };
+        /** BackgroundTask */
+        BackgroundTask: {
+            /** Current */
+            current?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Failed */
+            failed?: number | null;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Phase */
+            phase?: string | null;
+            /** Skipped */
+            skipped?: number | null;
+            /** Started At */
+            started_at?: number | null;
+            /** Status */
+            status: string;
+            /** Succeeded */
+            succeeded?: number | null;
+            /** Total */
+            total?: number | null;
+        };
+        /** BackgroundTasksResponse */
+        BackgroundTasksResponse: {
+            /** Tasks */
+            tasks: components["schemas"]["BackgroundTask"][];
+        };
+        /** BatchCategoryOverrideResponse */
+        BatchCategoryOverrideResponse: {
+            /** New Category */
+            new_category: string;
+            /** Success */
+            success: boolean;
+            /** Updated */
+            updated: number;
+        };
+        /** BatchOverrideCategoryBody */
+        BatchOverrideCategoryBody: {
+            /** Category */
+            category: string;
+            /** Paths */
+            paths: string[];
+        };
         /**
          * BatchPhotoRequest
          * @description The set a batch write acts on: named paths, or the gallery view itself.
@@ -4610,6 +4779,98 @@ export interface components {
             photo_paths?: string[] | null;
             /** Rating */
             rating: number;
+        };
+        /** BirdCancelBody */
+        BirdCancelBody: {
+            /** Confirm */
+            confirm: boolean;
+        };
+        /** BirdJob */
+        BirdJob: {
+            /** Cancel Requested */
+            cancel_requested: number;
+            /** Completed */
+            completed: number;
+            /** Error */
+            error?: string | null;
+            /** Failed */
+            failed: number;
+            /** Id */
+            id: string;
+            /** Phase */
+            phase: string;
+            /** Skipped */
+            skipped: number;
+            /** Status */
+            status: string;
+            /** Succeeded */
+            succeeded: number;
+            /** Total */
+            total: number;
+        };
+        /** BirdPhotoResult */
+        BirdPhotoResult: {
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Best Index */
+            best_index?: number | null;
+            /**
+             * Birds
+             * @default []
+             */
+            birds?: {
+                [key: string]: unknown;
+            }[];
+            /** Count */
+            count?: number | null;
+            /** Eligible Count */
+            eligible_count?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Excluded Small Count */
+            excluded_small_count?: number | null;
+            /** Focus Unverified Count */
+            focus_unverified_count?: number | null;
+            /** Height */
+            height?: number | null;
+            /** Min Area Percent */
+            min_area_percent?: number | null;
+            /**
+             * Outdated
+             * @default false
+             */
+            outdated?: boolean;
+            /** Score */
+            score?: number | null;
+            /**
+             * Stale
+             * @default false
+             */
+            stale?: boolean;
+            /** Status */
+            status?: string | null;
+            /** Width */
+            width?: number | null;
+        };
+        /** BirdStartBody */
+        BirdStartBody: {
+            /**
+             * Min Area Percent
+             * @default 1
+             */
+            min_area_percent?: number;
+            /** Paths */
+            paths: string[];
+            /**
+             * Recompute
+             * @default false
+             */
+            recompute?: boolean;
+            /**
+             * Tiled
+             * @default true
+             */
+            tiled?: boolean;
         };
         /** BurstGroup */
         BurstGroup: {
@@ -5976,6 +6237,16 @@ export interface components {
             aggregate?: number | null;
             /** Bg Separation */
             bg_separation?: number | null;
+            /** Bird Count */
+            bird_count?: number | null;
+            /** Bird Score Outdated */
+            bird_score_outdated?: number | null;
+            /** Bird Sharpness */
+            bird_sharpness?: number | null;
+            /** Bird Status */
+            bird_status?: string | null;
+            /** Bird Version */
+            bird_version?: string | null;
             /** Burst Group Id */
             burst_group_id?: number | null;
             /** Camera Model */
@@ -8159,6 +8430,168 @@ export interface operations {
             };
         };
     };
+    start_bird_job_api_birds_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BirdStartBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BirdJob"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bird_job_status_api_birds_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BirdJob"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_bird_job_api_birds_jobs__job_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BirdCancelBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BirdJob"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bird_photo_api_birds_photo_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BirdPhotoResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bird_preview_api_birds_preview_get: {
+        parameters: {
+            query: {
+                path: string;
+                index?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_burst_groups_api_burst_groups_get: {
         parameters: {
             query?: {
@@ -8706,6 +9139,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NextPairResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    api_comparison_override_categories_api_comparison_override_categories_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchOverrideCategoryBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchCategoryOverrideResponse"];
                 };
             };
             /** @description Validation Error */
@@ -13000,6 +13466,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    background_tasks_api_tasks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackgroundTasksResponse"];
                 };
             };
         };

@@ -43,6 +43,16 @@ describe('countActiveFilters', () => {
 });
 
 describe('buildApiParams', () => {
+  it('preserves bird result scope, status and score bounds through query serialization', () => {
+    const f = filters({ bird_job: 'job-1', bird_status: 'scored', min_bird_sharpness: '5', sort: 'bird_sharpness' });
+    const params = buildApiParams(f, false);
+    expect(params['bird_job']).toBe('job-1');
+    expect(params['bird_status']).toBe('scored');
+    expect(params['min_bird_sharpness']).toBe('5');
+    const restored = applyQueryParams(DEFAULT_FILTERS, buildSyncParams(f, undefined));
+    expect(restored.bird_job).toBe('job-1');
+    expect(restored.min_bird_sharpness).toBe('5');
+  });
   it('always includes pagination + sort', () => {
     expect(buildApiParams(DEFAULT_FILTERS, false)).toMatchObject({
       page: 1, per_page: 64, sort: 'aggregate', sort_direction: 'DESC',

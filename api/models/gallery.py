@@ -102,6 +102,11 @@ class Photo(BaseModel):
     subject_prominence: Optional[float] = None
     subject_placement: Optional[float] = None
     bg_separation: Optional[float] = None
+    bird_sharpness: Optional[float] = None
+    bird_count: CoercedInt = None
+    bird_status: Optional[str] = None
+    bird_version: Optional[str] = None
+    bird_score_outdated: CoercedInt = None
     star_rating: CoercedInt = None
     is_favorite: CoercedInt = None
     is_rejected: CoercedInt = None
@@ -330,6 +335,8 @@ class GalleryParams(BaseModel):
     max_deqa: str = ''
     # Saliency
     min_subject_sharpness: str = ''
+    min_bird_sharpness: str = ''
+    max_bird_sharpness: str = ''
     max_subject_sharpness: str = ''
     min_subject_prominence: str = ''
     max_subject_prominence: str = ''
@@ -342,6 +349,8 @@ class GalleryParams(BaseModel):
     max_moment_confidence: str = ''
     # Path
     path_prefix: str = ''
+    bird_job: str = ''
+    bird_status: str = ''
     # Set scope (photo-detail "open this set in the gallery"). Ephemeral: never
     # round-tripped through the URL, because sequence_group_id is renumbered
     # from 1 on every detection pass -- see gallery-filters.util.ts.

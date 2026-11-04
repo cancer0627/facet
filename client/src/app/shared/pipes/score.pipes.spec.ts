@@ -63,6 +63,11 @@ describe('ScoreClassPipe', () => {
 describe('SortScorePipe', () => {
   const pipe = new SortScorePipe();
 
+  it('does not substitute aggregate for an unknown bird sharpness', () => {
+    const photo = { aggregate: 9, bird_sharpness: null } as Photo;
+    expect(pipe.transform(photo, 'bird_sharpness')).toBeNull();
+  });
+
   // Minimal Photo stub — only the fields exercised by the tests matter.
   function makePhoto(overrides: Partial<Photo>): Photo {
     return { aggregate: 5, aesthetic: 7, ...overrides } as Photo;

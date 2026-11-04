@@ -151,6 +151,17 @@ const DEFAULT_CLIPPING_BADGE_PERCENT = 5;
       <!-- Image wrapper with hover overlay scoped to image only -->
       <div class="group/img relative"
            [class.md:h-full]="hideDetails()">
+        @if (currentSort() === 'bird_sharpness' && !isSelected()) {
+          <button type="button" class="absolute top-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded bg-black/70 text-white px-2 py-1 text-xs cursor-pointer"
+                  [attr.aria-label]="'birds.details' | translate" [title]="'birds.details' | translate"
+                  (click)="birdPreviewClicked.emit(photo()); $event.stopPropagation()"
+                  (dblclick)="$event.stopPropagation()" (keydown.enter)="$event.stopPropagation()" (keydown.space)="$event.stopPropagation()">
+            <mat-icon class="!text-base !w-4 !h-4" aria-hidden="true">center_focus_strong</mat-icon>
+            @if (photo().bird_score_outdated) { {{ 'birds.old_badge' | translate }} }
+            @else if (photo().bird_sharpness === null || photo().bird_sharpness === undefined) { — }
+            @else { {{ (photo().bird_sharpness ?? null) | fixed:2 }} }
+          </button>
+        }
         <img
           [src]="photo().path | thumbnailUrl:thumbSize()"
           [alt]="photo().caption || photo().filename"
@@ -648,6 +659,7 @@ export class PhotoCardComponent {
   readonly rejectedToggled = output<string>();
   readonly starClicked = output<{ photo: Photo; star: number }>();
   readonly doubleClicked = output<Photo>();
+  readonly birdPreviewClicked = output<Photo>();
 
   cycleStarRating(): void {
     const current = this.photo().star_rating ?? 0;

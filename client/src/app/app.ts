@@ -403,6 +403,13 @@ export class App implements OnInit {
     });
   }
 
+  protected async openBackgroundTasks(): Promise<void> {
+    const { BackgroundTasksDialogComponent } = await import('./features/tasks/background-tasks-dialog.component');
+    this.dialog.open(BackgroundTasksDialogComponent, {
+      width: '680px', maxWidth: '95vw', autoFocus: false,
+    });
+  }
+
   private readonly snackBar = inject(MatSnackBar);
   private readonly swUpdate = inject(SwUpdate, { optional: true });
 

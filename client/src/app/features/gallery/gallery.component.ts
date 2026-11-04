@@ -20,7 +20,6 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatSelectModule } from '@angular/material/select';
 import { MatInputModule } from '@angular/material/input';
 import { MatSliderModule } from '@angular/material/slider';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
@@ -56,7 +55,7 @@ import {
   GalleryRow, aspectOf, buildGridRows, buildMosaicRows, gridColumnCount, totalRowsHeight,
   windowRange,
 } from './gallery-rows.util';
-import { GalleryFilters, applyQueryParams, loadDisplayOptionsFromStorage } from './gallery-filters.util';
+import { GalleryFilters, DEFAULT_FILTERS, applyQueryParams, loadDisplayOptionsFromStorage } from './gallery-filters.util';
 import { AlbumService, Album } from '../../core/services/album.service';
 import { CreateAlbumDialogComponent } from '../albums/create-album-dialog.component';
 import { ExportEditorDialogComponent } from './export-editor-dialog.component';
@@ -66,6 +65,8 @@ import { PageHelpService } from '../../core/services/page-help.service';
 import { HeaderSlotService } from '../../core/services/header-slot.service';
 import { MAX_COMPARE_PANES } from './synced-zoom.component';
 import { HistogramMode, isHistogramMode } from '../../shared/utils/histogram';
+import type { BatchCategoryOverrideResult } from '../photo-detail/category-override-dialog.component';
+import type { BirdDialogResult } from './bird-detection-dialog.component';
 
 const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
 
@@ -78,7 +79,6 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
     MatIconModule,
     MatButtonModule,
     MatFormFieldModule,
-    MatSelectModule,
     MatInputModule,
     MatSliderModule,
     MatDialogModule,
@@ -100,18 +100,8 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
   ],
   template: `
     <!-- Header-slot toolbar: the app shell renders this in the global header on lg+.
-         Type filter + semantic search, rebound to the gallery store. -->
+         Search and library actions, rebound to the gallery store. -->
     <ng-template #galleryToolbar>
-      <mat-form-field class="!hidden lg:!inline-flex w-52 ml-2" subscriptSizing="dynamic">
-        <mat-label>{{ I18N.ui.filters.type | translate }}</mat-label>
-        <mat-select panelWidth="auto" panelClass="nowrap-panel !max-h-[70vh]" [value]="store.filters().type" (selectionChange)="onTypeChange($event.value)">
-          <mat-option value="">{{ I18N.gallery.all_photos | translate }}</mat-option>
-          @for (t of store.types(); track t.id) {
-            <mat-option [value]="t.id">{{ (t.id === 'top_picks' ? 'photo_types.top_picks' : 'category_names.' + t.id) | translate }} ({{ t.count }})</mat-option>
-          }
-        </mat-select>
-      </mat-form-field>
-
       <!-- Search -->
       <mat-form-field class="!hidden 2xl:!inline-flex w-64" subscriptSizing="dynamic">
         <input
@@ -211,6 +201,12 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
       <!-- Main content. The drawer reserves its own strip, so the grid gets
            exactly the width it has whenever the filters are open. -->
       <mat-sidenav-content>
+        @if (store.filters().bird_job) {
+          <div class="m-2 flex flex-wrap items-center gap-2 text-sm">
+            <span>{{ 'birds.result_scope' | translate }}</span>
+            <button mat-button (click)="store.updateFilter('bird_job', '')">{{ 'birds.leave_results' | translate }}</button>
+          </div>
+        }
         <!-- Hidden-photos banner -->
         @if (showHiddenBanner()) {
           <div class="mx-2 md:mx-4 mt-2 md:mt-4 px-3 py-2 rounded-md bg-[var(--mat-sys-surface-container-high)] border border-[var(--mat-sys-outline-variant)] flex items-center gap-3 text-sm">
@@ -339,6 +335,7 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
                       (rejectedToggled)="store.toggleRejected($event)"
                       (starClicked)="store.setRating($event.photo.path, $event.star)"
                       (doubleClicked)="downloadPhoto($event)"
+                      (birdPreviewClicked)="openBirdPreview($event)"
                     />
                   }
                 </div>
@@ -387,6 +384,7 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
                   (rejectedToggled)="store.toggleRejected($event)"
                   (starClicked)="store.setRating($event.photo.path, $event.star)"
                   (doubleClicked)="downloadPhoto($event)"
+                      (birdPreviewClicked)="openBirdPreview($event)"
                 />
               }
             </div>
@@ -440,6 +438,7 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
                       (rejectedToggled)="store.toggleRejected($event)"
                       (starClicked)="store.setRating($event.photo.path, $event.star)"
                       (doubleClicked)="downloadPhoto($event)"
+                      (birdPreviewClicked)="openBirdPreview($event)"
                     />
                   }
                 </div>
@@ -555,7 +554,7 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
           </div>
         }
         <span data-selection-status tabindex="-1" class="text-sm font-medium shrink-0">{{ (viewScoped() ? I18N.gallery.selection.view_scope_active : I18N.gallery.selection.count) | translate:{ count: selectionCount() } }}</span>
-        <div class="flex items-center gap-0 lg:gap-2">
+        <div class="flex items-center gap-0 lg:gap-2 lg:flex-wrap lg:justify-center">
           <button mat-icon-button class="lg:!hidden" (click)="clearSelection()" [matTooltip]="I18N.gallery.selection.clear | translate" [attr.aria-label]="I18N.gallery.selection.clear | translate"><mat-icon>close</mat-icon></button>
           <button mat-button class="!hidden lg:!inline-flex" (click)="clearSelection()"><mat-icon>close</mat-icon> {{ I18N.gallery.selection.clear | translate }}</button>
           @if (!allLoadedSelected()) {
@@ -574,6 +573,11 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
             {{ I18N.gallery.selection.actions | translate }}
           </button>
           @if (auth.isEdition()) {
+            <button mat-button class="!hidden lg:!inline-flex" [matMenuTriggerFor]="detectionMenu"><mat-icon>center_focus_strong</mat-icon> {{ 'birds.actions' | translate }}</button>
+            <mat-menu #detectionMenu="matMenu">
+              <button mat-menu-item (click)="openBirdDetection()">{{ 'birds.title' | translate }}</button>
+            </mat-menu>
+            <button mat-button class="!hidden lg:!inline-flex" (click)="batchCategory()"><mat-icon>category</mat-icon> {{ I18N.photo.category_override.batch_action | translate }}</button>
             <button mat-button class="!hidden lg:!inline-flex" (click)="batchFavorite()"><mat-icon>favorite</mat-icon> {{ I18N.gallery.selection.favorite | translate }}</button>
             <button mat-button class="!hidden lg:!inline-flex" (click)="addToCullingGroup()"
                     [disabled]="viewScoped() || selectionCount() < 2 || selectionCount() > 500 || creatingCullingGroup()"
@@ -1452,6 +1456,49 @@ export class GalleryComponent implements OnInit, OnDestroy {
     await this.executeBatchAction(p => this.store.batchRating(p, rating), 'gallery.selection.batch_rated', { rating });
   }
 
+  protected async batchCategory(): Promise<void> {
+    if (!this.auth.isEdition() || !this.selectionCount()) return;
+    // 分类弹窗展示本次实际选中的数量，保存时统一确认，无需额外确认弹窗。
+    const paths = await this.resolveSelectionPaths(null);
+    if (!paths?.length) return;
+    const { CategoryOverrideDialogComponent } = await import('../photo-detail/category-override-dialog.component');
+    const ref = this.dialog.open(CategoryOverrideDialogComponent, {
+      width: '400px',
+      data: { paths },
+    });
+    const result: BatchCategoryOverrideResult | undefined = await firstValueFrom(ref.afterClosed());
+    if (!result) return;
+    // 修改分类可能使照片离开当前筛选结果，重新加载列表和分类数量。
+    await Promise.all([this.store.loadPhotos(), this.store.loadTypeCounts()]);
+    this.clearSelection();
+  }
+
+  protected async openBirdDetection(): Promise<void> {
+    if (!this.auth.isEdition()) return;
+    const paths = await this.resolveSelectionPaths(null);
+    if (!paths?.length) return;
+    const { BirdDetectionDialogComponent } = await import('./bird-detection-dialog.component');
+    const ref = this.dialog.open(BirdDetectionDialogComponent, {
+      width: '95vw', maxWidth: '32rem', data: { paths },
+    });
+    const result: BirdDialogResult | undefined = await firstValueFrom(ref.afterClosed());
+    if (result?.viewResults) {
+      await this.store.updateFilters({
+        ...DEFAULT_FILTERS, ...loadDisplayOptionsFromStorage(),
+        bird_job: result.jobId, sort: 'bird_sharpness', sort_direction: 'DESC',
+        hide_blinks: false, hide_bursts: false, hide_duplicates: false,
+        hide_brackets: false, hide_panoramas: false, hide_rejected: false,
+      });
+      this.clearSelection();
+    } else if (result?.changed) {
+      await this.store.loadPhotos();
+    }
+  }
+
+  protected openBirdPreview(photo: Photo): void {
+    void this.router.navigate(['/photo'], { queryParams: { path: photo.path } });
+  }
+
   /**
    * Declare the selected frames one panorama the detector missed.
    *
@@ -1549,6 +1596,8 @@ export class GalleryComponent implements OnInit, OnDestroy {
       case 'reject': await this.batchReject(); break;
       case 'culling-group': await this.addToCullingGroup(); break;
       case 'rate': await this.batchRate(action.rating); break;
+      case 'category': await this.batchCategory(); break;
+      case 'bird-detection': await this.openBirdDetection(); break;
       case 'album': await this.addToAlbum(action.albumId); break;
       case 'create-album': await this.createAlbumAndAdd(); break;
       case 'invert': this.invertSelection(); break;
@@ -1835,10 +1884,6 @@ export class GalleryComponent implements OnInit, OnDestroy {
 
   filterByPerson(personId: number): void {
     this.store.updateFilter('person_id', String(personId));
-  }
-
-  protected onTypeChange(type: string): void {
-    this.store.updateFilter('type', type);
   }
 
   protected onSearchChange(event: Event): void {

@@ -3574,6 +3574,10 @@
       ],
       "Subject Saliency": [
         {
+          "column": "bird_sharpness",
+          "label": "Best Bird Sharpness"
+        },
+        {
           "column": "subject_sharpness",
           "label": "Subject Sharpness"
         },

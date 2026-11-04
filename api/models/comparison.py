@@ -129,6 +129,12 @@ class CategoryOverrideResponse(BaseModel):
     aggregate: Optional[float] = None
 
 
+class BatchCategoryOverrideResponse(BaseModel):
+    success: bool
+    updated: int
+    new_category: str
+
+
 class WeightSnapshotItem(BaseModel):
     id: int
     timestamp: Optional[str] = None

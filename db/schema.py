@@ -59,6 +59,17 @@ PHOTOS_COLUMNS = [
     ('isolation_bonus', 'REAL'),
     ('aggregate', 'REAL CHECK (aggregate IS NULL OR (aggregate >= 0 AND aggregate <= 10))'),
 
+    # 鸟类检测独立于现有总分，未运行时保持空值。
+    ('bird_sharpness', 'REAL'),
+    ('bird_count', 'INTEGER'),
+    ('bird_status', 'TEXT'),
+    ('bird_bbox', 'TEXT'),
+    ('bird_detection_json', 'TEXT'),
+    ('bird_source_signature', 'TEXT'),
+    ('bird_version', 'TEXT'),
+    ('bird_detected_at', 'REAL'),
+    ('bird_error', 'TEXT'),
+
     # Flags
     ('is_blink', 'INTEGER CHECK (is_blink IS NULL OR is_blink IN (0, 1))'),
     ('is_burst_lead', 'INTEGER DEFAULT 0 CHECK (is_burst_lead IN (0, 1))'),
@@ -800,6 +811,17 @@ def _migrate_add_missing_columns(conn, table_name, columns):
                         logger.warning("  Could not add %s.%s: %s", table_name, col_name, e)
 
 
+BIRD_JOBS_COLUMNS = [
+    ('id', 'TEXT PRIMARY KEY'), ('user_id', 'TEXT'),
+    ('status', 'TEXT NOT NULL'), ('phase', 'TEXT NOT NULL'),
+    ('total', 'INTEGER NOT NULL'), ('completed', 'INTEGER NOT NULL DEFAULT 0'),
+    ('succeeded', 'INTEGER NOT NULL DEFAULT 0'), ('failed', 'INTEGER NOT NULL DEFAULT 0'),
+    ('skipped', 'INTEGER NOT NULL DEFAULT 0'), ('cancel_requested', 'INTEGER NOT NULL DEFAULT 0'),
+    ('pid', 'INTEGER'), ('paths_json', 'TEXT NOT NULL'), ('options_json', 'TEXT NOT NULL'),
+    ('error', 'TEXT'), ('created_at', 'REAL NOT NULL'), ('updated_at', 'REAL NOT NULL'),
+]
+
+
 # Every base (non-virtual) table and its column list. The additive-column sweep
 # in init_database walks this registry so a new column added to ANY table lands
 # on upgrade — previously only a subset of tables were swept, so a future column
@@ -807,6 +829,7 @@ def _migrate_add_missing_columns(conn, table_name, columns):
 # Virtual tables (photos_fts, photos_vec) are excluded: they are recreated, not
 # ALTERed. Order mirrors the CREATE TABLE order in init_database.
 _MIGRATED_TABLES = [
+    ('bird_detection_jobs', BIRD_JOBS_COLUMNS),
     ('photos', PHOTOS_COLUMNS),
     ('faces', FACES_COLUMNS),
     ('persons', PERSONS_COLUMNS),
@@ -952,6 +975,7 @@ def init_database(db_path='photo_scores_pro.db'):
 
         # Create photos table
         conn.execute(_build_create_table_sql('photos', PHOTOS_COLUMNS))
+        conn.execute(_build_create_table_sql('bird_detection_jobs', BIRD_JOBS_COLUMNS))
 
         # Create faces table with unique constraint
         conn.execute(_build_create_table_sql(

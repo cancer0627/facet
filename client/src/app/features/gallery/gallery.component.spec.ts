@@ -1959,6 +1959,112 @@ describe('GalleryComponent', () => {
     });
   });
 
+  describe('bird detection', () => {
+    const detect = () => (component as unknown as { openBirdDetection(): Promise<void> }).openBirdDetection();
+
+    beforeEach(() => {
+      mockAuth['isEdition'] = vi.fn(() => true);
+      mockStore.selectedPaths.set(new Set(['/a.jpg', '/b.jpg']));
+      mockStore.selectionCount.set(2);
+      (TestBed.inject(MatDialog).open as Mock).mockReturnValue({ afterClosed: () => of(undefined) });
+    });
+
+    it('opens detection for the exact selection without changing its category', async () => {
+      await detect();
+      const dialog = TestBed.inject(MatDialog);
+      expect((dialog.open as Mock).mock.calls[0][1].data.paths).toEqual(['/a.jpg', '/b.jpg']);
+      expect(mockApi.post).not.toHaveBeenCalled();
+    });
+
+    it('resolves all selected pages before opening detection', async () => {
+      mockStore.viewScopeSelected.set(true);
+      mockStore.selectedPaths.set(new Set());
+      mockStore.pathsInView.mockResolvedValue(['/a.jpg', '/b.jpg', '/unloaded.jpg']);
+      await detect();
+      expect((TestBed.inject(MatDialog).open as Mock).mock.calls[0][1].data.paths)
+        .toEqual(['/a.jpg', '/b.jpg', '/unloaded.jpg']);
+    });
+
+    it('scopes completed results to the job and sorts by bird sharpness', async () => {
+      (TestBed.inject(MatDialog).open as Mock).mockReturnValue({
+        afterClosed: () => of({ jobId: 'job-1', changed: true, viewResults: true }),
+      });
+      await detect();
+      expect(mockStore.updateFilters).toHaveBeenCalledWith(expect.objectContaining({
+        bird_job: 'job-1', sort: 'bird_sharpness', sort_direction: 'DESC', type: '', hide_bursts: false,
+      }));
+      expect(mockStore.clearSelection).toHaveBeenCalled();
+    });
+
+    it('does nothing for an empty or non-editable selection', async () => {
+      mockAuth['isEdition'] = vi.fn(() => false);
+      await detect();
+      expect(TestBed.inject(MatDialog).open).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('batchCategory', () => {
+    const change = () => (component as unknown as { batchCategory(): Promise<void> }).batchCategory();
+    let dialog: MatDialog;
+
+    beforeEach(() => {
+      mockAuth['isEdition'] = vi.fn(() => true);
+      mockStore.selectedPaths.set(new Set(['/a.jpg', '/b.jpg']));
+      mockStore.selectionCount.set(2);
+      dialog = TestBed.inject(MatDialog);
+      (dialog.open as Mock).mockReturnValue({ afterClosed: () => of(undefined) });
+    });
+
+    it('opens the category dialog with all explicit selected paths', async () => {
+      await change();
+      expect((dialog.open as Mock).mock.calls[0][1].data).toEqual({ paths: ['/a.jpg', '/b.jpg'] });
+      expect(mockStore.clearSelection).not.toHaveBeenCalled();
+    });
+
+    it('resolves the whole view including unloaded pages rather than just loaded photos', async () => {
+      mockStore.viewScopeSelected.set(true);
+      mockStore.selectedPaths.set(new Set());
+      const paths = Array.from({ length: 1500 }, (_, i) => `/bird-${i}.jpg`);
+      mockStore.pathsInView.mockResolvedValue(paths);
+      await change();
+      expect(mockStore.pathsInView).toHaveBeenCalledOnce();
+      expect(dialog.open).toHaveBeenCalledTimes(1);
+      expect((dialog.open as Mock).mock.calls[0][1].data).toEqual({ paths });
+    });
+
+    it('does not open or clear the selection when view resolution fails', async () => {
+      mockStore.viewScopeSelected.set(true);
+      mockStore.pathsInView.mockResolvedValue(null);
+      await change();
+      expect(dialog.open).not.toHaveBeenCalled();
+      expect(mockStore.clearSelection).not.toHaveBeenCalled();
+    });
+
+    it('reloads photos and counts after saving before clearing the selection', async () => {
+      (dialog.open as Mock).mockReturnValue({ afterClosed: () => of({ category: 'wildlife', updated: 2 }) });
+      const order: string[] = [];
+      mockStore.loadPhotos.mockImplementation(async () => { order.push('photos'); });
+      mockStore.loadTypeCounts.mockImplementation(async () => { order.push('counts'); });
+      mockStore.clearSelection.mockImplementation(() => order.push('clear'));
+      await change();
+      expect(order).toEqual(['photos', 'counts', 'clear']);
+    });
+
+    it('does not offer editing without edition access', async () => {
+      mockAuth['isEdition'] = vi.fn(() => false);
+      await change();
+      expect(dialog.open).not.toHaveBeenCalled();
+    });
+
+    it('dispatches category changes from the mobile actions sheet', async () => {
+      mockAuth['downloadProfiles'] = vi.fn(() => []);
+      const sheet = TestBed.inject(MatBottomSheet);
+      (sheet.open as Mock).mockReturnValue({ afterDismissed: () => of({ kind: 'category' }) });
+      await (component as unknown as { openActionsSheet(): Promise<void> }).openActionsSheet();
+      expect((dialog.open as Mock).mock.calls[0][1].data.paths).toEqual(['/a.jpg', '/b.jpg']);
+    });
+  });
+
   describe('downloadSelected', () => {
     function select(paths: string[]) {
       mockStore.selectedPaths.set(new Set(paths));

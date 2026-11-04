@@ -16,6 +16,8 @@ export type SheetAction =
   | { kind: 'cull' }
   | { kind: 'delete' }
   | { kind: 'rate'; rating: number }
+  | { kind: 'category' }
+  | { kind: 'bird-detection' }
   | { kind: 'mark-panorama'; sequenceKind: 'panorama' | 'hdr_panorama' }
   | { kind: 'album'; albumId: number }
   | { kind: 'create-album' }
@@ -49,6 +51,15 @@ export interface GalleryActionsSheetData {
       </div>
 
       @if (data.isEdition) {
+        <div class="px-4 pt-3 text-xs opacity-70">{{ 'birds.actions' | translate }}</div>
+        <button class="flex items-center gap-3 w-full px-4 py-3 text-sm text-left hover:bg-white/10 cursor-pointer" (click)="pick({ kind: 'bird-detection' })">
+          <mat-icon aria-hidden="true">center_focus_strong</mat-icon>
+          {{ 'birds.title' | translate }}
+        </button>
+        <button class="flex items-center gap-3 w-full px-4 py-3 text-sm text-left hover:bg-white/10 cursor-pointer" (click)="pick({ kind: 'category' })">
+          <mat-icon aria-hidden="true">category</mat-icon>
+          {{ I18N.photo.category_override.batch_action | translate }}
+        </button>
         <button class="flex items-center gap-3 w-full px-4 py-3 text-sm text-left hover:bg-white/10 cursor-pointer disabled:opacity-40"
                 [disabled]="!data.canGroup" (click)="pick({ kind: 'culling-group' })">
           <mat-icon aria-hidden="true">library_add</mat-icon>

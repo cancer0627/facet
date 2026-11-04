@@ -926,6 +926,160 @@ class TestOverrideCategory:
 # TestClearCategoryOverride
 # ---------------------------------------------------------------------------
 
+class TestBatchOverrideCategory:
+    ENDPOINT = '/api/comparison/override_categories'
+
+    @pytest.fixture
+    def library(self, tmp_path, monkeypatch):
+        import sqlite3
+        from contextlib import contextmanager
+        from api.routers import comparison as router_module
+        from config import ScoringConfig
+        from db.schema import init_database
+
+        db_path = str(tmp_path / 'batch-categories.db')
+        init_database(db_path)
+        with sqlite3.connect(db_path) as conn:
+            conn.executemany(
+                'INSERT INTO photos (path, category, aggregate, aesthetic, tech_sharpness, star_rating) '
+                'VALUES (?, ?, ?, ?, ?, ?)',
+                [(p, 'landscape', 1.0, 8.0, 6.0, 4) for p in ('/a.jpg', '/b.jpg', '/untouched.jpg')],
+            )
+
+        @contextmanager
+        def get_test_db():
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+            finally:
+                conn.close()
+
+        cfg = ScoringConfig(str(_REPO_CONFIG_PATH), validate=False)
+        monkeypatch.setattr(router_module, 'get_db', get_test_db)
+        monkeypatch.setattr(router_module, 'DEFAULT_DB_PATH', db_path)
+        monkeypatch.setattr(router_module, '_CONFIG_PATH', _REPO_CONFIG_PATH)
+        monkeypatch.setattr(router_module, 'server_scoring_config', lambda: cfg)
+        app, client = _make_app_and_client(raise_server_exceptions=False)
+        _override_auth(app, _edition_user())
+        return app, client, get_test_db
+
+    @pytest.mark.parametrize('user, expected', [(_regular_user(), 403), (None, 401)])
+    def test_requires_edition(self, user, expected):
+        app, client = _make_app_and_client(raise_server_exceptions=False)
+        if user:
+            _override_auth(app, user)
+        with mock.patch(f'{_AUTH_MODULE}.is_multi_user_enabled', return_value=True):
+            resp = client.post(self.ENDPOINT, json={'paths': ['/a.jpg'], 'category': 'wildlife'})
+        assert resp.status_code == expected
+
+    @pytest.mark.parametrize('paths', [[], [''], ['   '], ['/a.jpg', '']])
+    def test_rejects_empty_selection_or_paths(self, paths):
+        app, client = _make_app_and_client()
+        _override_auth(app, _edition_user())
+        resp = client.post(self.ENDPOINT, json={'paths': paths, 'category': 'wildlife'})
+        assert resp.status_code == 422
+
+    def test_updates_only_selected_photos_and_keeps_manual_category(self, library):
+        from db.scoring_overrides import get_photo_scoring_overrides, set_photo_scoring_override
+        from processing.scorer import Facet
+
+        _, client, get_test_db = library
+        with get_test_db() as conn, conn:
+            set_photo_scoring_override(conn, '/a.jpg', scoring_context='landscape', source='album:1')
+
+        with mock.patch('processing.scorer.Facet', wraps=Facet) as scorer_factory:
+            resp = client.post(self.ENDPOINT, json={
+                'paths': ['/a.jpg', '/b.jpg', '/a.jpg'], 'category': 'wildlife',
+            })
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {'success': True, 'updated': 2, 'new_category': 'wildlife'}
+        assert scorer_factory.call_count == 1
+        with get_test_db() as conn:
+            rows = {r['path']: dict(r) for r in conn.execute('SELECT * FROM photos')}
+            overrides = get_photo_scoring_overrides(conn)
+            assert overrides['/a.jpg'] == {'category_override': 'wildlife', 'scoring_context': 'landscape'}
+            assert overrides['/b.jpg']['category_override'] == 'wildlife'
+            assert '/untouched.jpg' not in overrides
+            for path in ('/a.jpg', '/b.jpg'):
+                assert rows[path]['category'] == 'wildlife'
+                assert rows[path]['aggregate'] != 1.0
+                assert rows[path]['star_rating'] == 4
+            assert rows['/untouched.jpg']['category'] == 'landscape'
+            assert rows['/untouched.jpg']['aggregate'] == 1.0
+
+            # 重新计算仍应服从持久保存的人工分类。
+            scorer = Facet.__new__(Facet)
+            from config import ScoringConfig
+            scorer.config = ScoringConfig(str(_REPO_CONFIG_PATH), validate=False)
+            for path in ('/a.jpg', '/b.jpg'):
+                metrics = {**rows[path], **overrides[path]}
+                score, category = scorer.calculate_aggregate_logic(metrics)
+                assert category == 'wildlife'
+                assert round(score, 2) == rows[path]['aggregate']
+
+    def test_unknown_category_leaves_selection_unchanged(self, library):
+        _, client, get_test_db = library
+        resp = client.post(self.ENDPOINT, json={'paths': ['/a.jpg'], 'category': 'invalid'})
+        assert resp.status_code == 400
+        with get_test_db() as conn:
+            assert conn.execute('SELECT COUNT(*) FROM photo_scoring_overrides').fetchone()[0] == 0
+
+    def test_category_counts_refresh_immediately_after_save(self, library, monkeypatch):
+        import sqlite3
+        from api import types as photo_types
+        from api.routers import comparison as router_module
+
+        _, client, get_test_db = library
+        with get_test_db() as conn:
+            db_path = conn.execute('PRAGMA database_list').fetchone()[2]
+        monkeypatch.setattr('api.db_helpers.get_db_connection', lambda: sqlite3.connect(db_path))
+        cache = {'data': {}, 'expires': 0}
+        monkeypatch.setattr(photo_types, '_photo_types_cache', cache)
+        monkeypatch.setattr(router_module, '_photo_types_cache', cache)
+        before = {t['id']: t['count'] for t in client.get('/api/type_counts').json()['types']}
+        assert before['landscape'] == 3
+        resp = client.post(self.ENDPOINT, json={'paths': ['/a.jpg', '/b.jpg'], 'category': 'wildlife'})
+        assert resp.status_code == 200
+        after = {t['id']: t['count'] for t in client.get('/api/type_counts').json()['types']}
+        assert after['landscape'] == 1
+        assert after['wildlife'] == 2
+
+    @pytest.mark.parametrize('hidden', [False, True])
+    def test_missing_or_invisible_photo_prevents_all_updates(self, library, hidden):
+        _, client, get_test_db = library
+        visibility = ('photos.path != ?', ['/b.jpg']) if hidden else ('1=1', [])
+        paths = ['/a.jpg', '/b.jpg' if hidden else '/missing.jpg']
+        with mock.patch(f'{_ROUTER_MODULE}.get_visibility_clause', return_value=visibility):
+            resp = client.post(self.ENDPOINT, json={'paths': paths, 'category': 'wildlife'})
+        assert resp.status_code == 404
+        with get_test_db() as conn:
+            assert conn.execute('SELECT COUNT(*) FROM photo_scoring_overrides').fetchone()[0] == 0
+            assert {r[0] for r in conn.execute('SELECT category FROM photos')} == {'landscape'}
+
+    def test_write_failure_rolls_back_all_updates(self, library):
+        _, client, get_test_db = library
+        with get_test_db() as conn, conn:
+            conn.execute("CREATE TRIGGER fail_category BEFORE UPDATE OF category ON photos "
+                         "WHEN NEW.path = '/b.jpg' BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+        resp = client.post(self.ENDPOINT, json={'paths': ['/a.jpg', '/b.jpg'], 'category': 'wildlife'})
+        assert resp.status_code == 500
+        with get_test_db() as conn:
+            assert conn.execute('SELECT COUNT(*) FROM photo_scoring_overrides').fetchone()[0] == 0
+            assert {r[0] for r in conn.execute('SELECT aggregate FROM photos')} == {1.0}
+
+    def test_updates_1500_photos_across_query_chunks(self, library):
+        _, client, get_test_db = library
+        paths = [f'/bird-{i}.jpg' for i in range(1500)]
+        with get_test_db() as conn, conn:
+            conn.executemany('INSERT INTO photos (path) VALUES (?)', [(p,) for p in paths])
+        resp = client.post(self.ENDPOINT, json={'paths': paths, 'category': 'wildlife'})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()['updated'] == 1500
+        with get_test_db() as conn:
+            assert conn.execute("SELECT COUNT(*) FROM photos WHERE category = 'wildlife'").fetchone()[0] == 1500
+
+
 class TestClearCategoryOverride:
     """POST /api/comparison/clear_category_override"""
 

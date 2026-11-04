@@ -11,9 +11,11 @@ import { makePhoto } from '../../../../testing/photo.fixture';
   standalone: true,
   imports: [PhotoCardComponent],
   template: `<app-photo-card [photo]="photo()" [config]="config()"
+                             [currentSort]="sort()"
                              [burstFramesVisible]="burstFramesVisible()" />`,
 })
 class TestHostComponent {
+  sort = signal('aggregate');
   photo = signal<Photo>(makePhoto());
   config = signal<Record<string, unknown> | null>(null);
   burstFramesVisible = signal(false);
@@ -40,6 +42,33 @@ describe('PhotoCardComponent', () => {
     const card = getCard();
     expect(card).toBeTruthy();
     expect(card.photo().filename).toBe('test.jpg');
+  });
+
+  it('opens bird results from the score badge without selecting or downloading the photo', () => {
+    fixture.componentInstance.sort.set('bird_sharpness');
+    fixture.componentInstance.photo.set(makePhoto({ bird_sharpness: 5.25, bird_status: 'scored' }));
+    fixture.detectChanges();
+    const card = getCard();
+    const open = vi.fn();
+    const select = vi.fn();
+    const download = vi.fn();
+    card.birdPreviewClicked.subscribe(open);
+    card.selectionChange.subscribe(select);
+    card.doubleClicked.subscribe(download);
+    const button = fixture.nativeElement.querySelector('[aria-label="birds.details"]') as HTMLButtonElement;
+    expect(button.textContent).toContain('5.25');
+    button.click();
+    expect(open).toHaveBeenCalledWith(card.photo());
+    expect(select).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it('marks an obsolete bird score rather than displaying it on the current scale', () => {
+    fixture.componentInstance.sort.set('bird_sharpness');
+    fixture.componentInstance.photo.set(makePhoto({ bird_sharpness: null, bird_score_outdated: 1 }));
+    fixture.detectChanges();
+    const badge = fixture.nativeElement.querySelector('[aria-label="birds.details"]') as HTMLButtonElement;
+    expect(badge.textContent).toContain('birds.old_badge');
   });
 
   it('should have default input values', () => {

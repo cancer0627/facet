@@ -1,0 +1,132 @@
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { MatButtonModule } from '@angular/material/button';
+import { MatDialogModule } from '@angular/material/dialog';
+import { MatIconModule } from '@angular/material/icon';
+import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { firstValueFrom } from 'rxjs';
+import { ApiService } from '../../core/services/api.service';
+import { I18nService } from '../../core/services/i18n.service';
+import { TranslatePipe } from '../../shared/pipes/translate.pipe';
+import type { components } from '../../core/api/schema';
+
+type BackgroundTask = components['schemas']['BackgroundTask'];
+type TasksResponse = components['schemas']['BackgroundTasksResponse'];
+
+@Component({
+  selector: 'app-background-tasks-dialog',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [DatePipe, MatButtonModule, MatDialogModule, MatIconModule, MatProgressBarModule, TranslatePipe],
+  template: `
+    <h2 mat-dialog-title class="flex items-center gap-2">
+      <mat-icon>pending_actions</mat-icon>{{ 'tasks.title' | translate }}
+    </h2>
+    <mat-dialog-content class="!pt-2">
+      <p class="text-sm opacity-70 mb-4">{{ 'tasks.description' | translate }}</p>
+      @if (error()) {
+        <p role="alert" class="mb-4 text-[var(--mat-sys-error)]">{{ 'tasks.load_error' | translate }}</p>
+      }
+      @if (loading()) {
+        <mat-progress-bar mode="indeterminate" />
+      } @else if (!tasks().length && !error()) {
+        <p class="py-8 text-center opacity-70">{{ 'tasks.empty' | translate }}</p>
+      }
+      @if (tasks().length) {
+        <p class="text-sm mb-3" role="status">{{ 'tasks.active_count' | translate:{ count: activeCount() } }}</p>
+      }
+      <div class="flex flex-col gap-3">
+        @for (task of tasks(); track task.id) {
+          <article class="rounded-lg border border-[var(--mat-sys-outline-variant)] p-4 min-w-0">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <span class="font-medium">{{ kindLabel(task.kind) }}</span>
+              <span class="text-sm" [style.color]="task.status === 'failed' ? 'var(--mat-sys-error)' : active(task) ? 'var(--mat-sys-primary)' : ''">
+                {{ ('tasks.status.' + task.status) | translate }}
+              </span>
+            </div>
+            @if (task.started_at) {
+              <p class="text-xs opacity-60 mb-2">{{ task.started_at! * 1000 | date:'yyyy-MM-dd HH:mm:ss' }}</p>
+            }
+            @if (phaseLabel(task); as phase) {
+              <p class="text-sm opacity-80 mb-2">{{ phase }}</p>
+            }
+            @if (active(task) || task.total) {
+              <mat-progress-bar [mode]="task.total && task.current != null ? 'determinate' : 'indeterminate'"
+                                [value]="percent(task)" />
+            }
+            @if (task.total != null && task.current != null) {
+              <p class="text-sm mt-2">{{ 'tasks.progress' | translate:{ current: task.current!, total: task.total! } }}</p>
+            } @else if (active(task)) {
+              <p class="text-sm opacity-70 mt-2">{{ 'tasks.progress_unknown' | translate }}</p>
+            }
+            @if (task.succeeded != null) {
+              <p class="text-sm opacity-70 mt-2">{{ 'birds.counts' | translate:{ succeeded: task.succeeded!, skipped: task.skipped ?? 0, failed: task.failed ?? 0 } }}</p>
+            }
+            @if (task.error) {
+              <p class="text-sm mt-2 break-words text-[var(--mat-sys-error)]">{{ task.error }}</p>
+            }
+          </article>
+        }
+      </div>
+    </mat-dialog-content>
+    <mat-dialog-actions align="end">
+      <button mat-button [disabled]="refreshing()" (click)="refresh()">{{ 'tasks.refresh' | translate }}</button>
+      <button mat-button mat-dialog-close>{{ 'dialog.close' | translate }}</button>
+    </mat-dialog-actions>
+  `,
+})
+export class BackgroundTasksDialogComponent {
+  private readonly api = inject(ApiService);
+  private readonly i18n = inject(I18nService);
+  protected readonly tasks = signal<BackgroundTask[]>([]);
+  protected readonly loading = signal(true);
+  protected readonly refreshing = signal(false);
+  protected readonly error = signal(false);
+  protected readonly activeCount = computed(() => this.tasks().filter(task => this.active(task)).length);
+  private disposed = false;
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      this.disposed = true;
+    });
+    void this.refresh();
+  }
+
+  protected active(task: BackgroundTask): boolean {
+    return ['queued', 'running', 'stopping'].includes(task.status);
+  }
+
+  protected percent(task: BackgroundTask): number {
+    return task.total ? Math.min(100, Math.max(0, (task.current ?? 0) / task.total * 100)) : 0;
+  }
+
+  protected kindLabel(kind: string): string {
+    const key = 'tasks.kind.' + kind;
+    const label = this.i18n.t(key);
+    return label === key ? this.i18n.t('tasks.kind.maintenance') : label;
+  }
+
+  protected phaseLabel(task: BackgroundTask): string {
+    if (!task.phase) return '';
+    const key = (task.kind === 'birds' ? 'birds.phase.' : 'scan.phase.') + task.phase;
+    const label = this.i18n.t(key);
+    return label === key ? '' : label;
+  }
+
+  protected async refresh(): Promise<void> {
+    if (this.refreshing() || this.disposed) return;
+    this.refreshing.set(true);
+    try {
+      const response = await firstValueFrom(this.api.get<TasksResponse>('/tasks'));
+      if (this.disposed) return;
+      this.tasks.set(response.tasks);
+      this.error.set(false);
+    } catch {
+      if (!this.disposed) this.error.set(true);
+    } finally {
+      if (!this.disposed) {
+        this.loading.set(false);
+        this.refreshing.set(false);
+      }
+    }
+  }
+}

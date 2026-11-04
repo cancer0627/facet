@@ -92,6 +92,8 @@ export interface GalleryFilters {
   max_deqa: string;
   // Subject saliency
   min_subject_sharpness: string;
+  min_bird_sharpness: string;
+  max_bird_sharpness: string;
   max_subject_sharpness: string;
   min_subject_prominence: string;
   max_subject_prominence: string;
@@ -147,6 +149,8 @@ export interface GalleryFilters {
   album_id: string;
   // Folder filter
   path_prefix: string;
+  bird_job: string;
+  bird_status: string;
   // GPS filter
   gps_lat: string;
   gps_lng: string;
@@ -221,6 +225,7 @@ export function seededSearchThreshold(searchThresholdDefault: number | null | un
 
 /** Keys excluded when building smart album filter JSON (display-only, ephemeral, or handled separately). */
 export const SMART_ALBUM_EXCLUDE_KEYS = new Set([
+  'bird_job',
   'page', 'per_page', 'semanticQuery', 'search_threshold', 'album_id',
   'similar_to', 'similarity_mode', 'min_similarity',
   'hide_details', 'tooltip_mode', 'panel_activation', 'hide_blinks', 'hide_bursts',
@@ -231,6 +236,7 @@ export const SMART_ALBUM_EXCLUDE_KEYS = new Set([
 
 /** Common string-typed filter keys shared across URL sync, API params, and filter counting. */
 export const RANGE_AND_SELECT_KEYS: (keyof GalleryFilters)[] = [
+  'bird_job', 'bird_status',
   'type', 'camera', 'lens', 'tag', 'person_id', 'composition_pattern', 'search',
   'color_temp', 'hue_bucket', 'quality_tier', 'sequence_override',
   'min_score', 'max_score', 'min_aesthetic', 'max_aesthetic',
@@ -249,6 +255,7 @@ export const RANGE_AND_SELECT_KEYS: (keyof GalleryFilters)[] = [
   'min_liqe', 'max_liqe',
   'min_qrealign', 'max_qrealign', 'min_aesthetic_v25', 'max_aesthetic_v25', 'min_deqa', 'max_deqa',
   'min_subject_sharpness', 'max_subject_sharpness', 'min_subject_prominence', 'max_subject_prominence',
+  'min_bird_sharpness', 'max_bird_sharpness',
   'min_subject_placement', 'max_subject_placement', 'min_bg_separation', 'max_bg_separation',
   'min_moment_confidence', 'max_moment_confidence',
   'min_face_count', 'max_face_count',
@@ -324,6 +331,8 @@ export const DEFAULT_FILTERS: GalleryFilters = {
   min_deqa: '',
   max_deqa: '',
   min_subject_sharpness: '',
+  min_bird_sharpness: '',
+  max_bird_sharpness: '',
   max_subject_sharpness: '',
   min_subject_prominence: '',
   max_subject_prominence: '',
@@ -356,6 +365,8 @@ export const DEFAULT_FILTERS: GalleryFilters = {
   composition_pattern: '',
   sequence_override: '',
   path_prefix: '',
+  bird_job: '',
+  bird_status: '',
   semanticQuery: '',
   search_threshold: '',
   album_id: '',

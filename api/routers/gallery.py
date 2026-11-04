@@ -474,6 +474,7 @@ SCORE_RANGE_COLUMNS = [
     ("aesthetic_v25", "min_aesthetic_v25", "max_aesthetic_v25", True),
     ("deqa_score", "min_deqa", "max_deqa", True),
     ("subject_sharpness", "min_subject_sharpness", "max_subject_sharpness", True),
+    ("bird_sharpness", "min_bird_sharpness", "max_bird_sharpness", True),
     ("subject_prominence", "min_subject_prominence", "max_subject_prominence", True),
     ("subject_placement", "min_subject_placement", "max_subject_placement", True),
     ("bg_separation", "min_bg_separation", "max_bg_separation", True),
@@ -490,6 +491,9 @@ EXIF_RANGE_COLUMNS = [
 def _apply_score_range_filters(where_clauses, sql_params, params):
     """Apply all score/metric range filters."""
     for column, min_key, max_key, is_float in SCORE_RANGE_COLUMNS:
+        if column == 'bird_sharpness':
+            from api.db_helpers import current_bird_score_sql
+            column = current_bird_score_sql()
         _add_range_filter(where_clauses, sql_params, params, column, min_key, max_key, is_float=is_float)
 
 
@@ -546,6 +550,15 @@ def _build_gallery_where(params, conn=None, user_id=None):
     """Build WHERE clauses for gallery queries."""
     where_clauses = []
     sql_params = []
+    if params.get('bird_job'):
+        where_clauses.append("photos.path IN (SELECT value FROM json_each("
+                             "(SELECT paths_json FROM bird_detection_jobs WHERE id=? AND COALESCE(user_id,'')=?)))")
+        sql_params.extend([params['bird_job'], user_id or ''])
+    if params.get('bird_status') == 'unprocessed':
+        where_clauses.append('photos.bird_status IS NULL')
+    elif params.get('bird_status'):
+        where_clauses.append('photos.bird_status = ?')
+        sql_params.append(params['bird_status'])
     _apply_visibility_and_hide_filters(where_clauses, sql_params, params, user_id)
     _apply_text_filters(where_clauses, sql_params, params, conn)
     _apply_preference_filters(where_clauses, sql_params, params, user_id)
@@ -853,7 +866,11 @@ def _resolve_order_by(params: dict) -> str:
     """
     sort_col = params['sort'] if params['sort'] in VALID_SORT_COLS else 'aggregate'
     sort_dir = 'ASC' if params['dir'] == 'ASC' else 'DESC'
-    if sort_col in ('learned_score', 'narrative_moment_confidence', 'vcg_submission_score'):
+    if sort_col == 'bird_sharpness':
+        from api.db_helpers import current_bird_score_sql
+        expression = current_bird_score_sql()
+        return f'({expression} IS NULL) ASC, {expression} {sort_dir}, path ASC'
+    if sort_col in ('learned_score', 'narrative_moment_confidence', 'vcg_submission_score', 'bird_sharpness'):
         if sort_dir == 'ASC':
             return f"({sort_col} IS NULL) ASC, {sort_col} ASC, path ASC"
         return f"{sort_col} DESC, path ASC"

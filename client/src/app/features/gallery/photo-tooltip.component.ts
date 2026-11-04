@@ -120,6 +120,9 @@ export class CategoryLabelPipe implements PipeTransform {
             </div>
 
             <!-- Caption (after score) -->
+            @if (p.bird_sharpness !== null && p.bird_sharpness !== undefined) {
+              <div class="text-xs mb-2">{{ 'birds.score' | translate }}: {{ p.bird_sharpness | fixed:2 }} / 10</div>
+            }
             @if (p.caption_translated || p.caption) {
               <div class="text-xs italic text-[var(--facet-tooltip-text-muted)] mb-1.5 line-clamp-2 max-w-[300px]">{{ p.caption_translated || p.caption }}</div>
             }

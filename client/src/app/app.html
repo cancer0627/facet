@@ -57,6 +57,9 @@
             <a mat-icon-button class="lg:!hidden" routerLink="/compare" routerLinkActive #rlCompareM="routerLinkActive" [style.color]="rlCompareM.isActive ? 'var(--mat-sys-primary)' : ''" [matTooltip]="I18N.nav.compare | translate" [attr.aria-label]="I18N.nav.compare | translate">
               <mat-icon>compare</mat-icon>
             </a>
+            <button mat-icon-button class="lg:!hidden" (click)="openBackgroundTasks()" [matTooltip]="I18N.tasks.title | translate" [attr.aria-label]="I18N.tasks.title | translate">
+              <mat-icon>pending_actions</mat-icon>
+            </button>
           }
           @if (store.config()?.features?.show_memories && hasMemories()) {
             <button mat-icon-button class="lg:!hidden" (click)="playMemories()" [matTooltip]="I18N.memories.tooltip | translate" [attr.aria-label]="I18N.nav.memories | translate">
@@ -111,6 +114,9 @@
             <a mat-icon-button class="!hidden lg:!inline-flex" routerLink="/compare" routerLinkActive #rlCompare="routerLinkActive" [style.color]="rlCompare.isActive ? 'var(--mat-sys-primary)' : ''" [matTooltip]="I18N.nav.compare | translate" [attr.aria-label]="I18N.nav.compare | translate">
               <mat-icon>compare</mat-icon>
             </a>
+            <button mat-icon-button class="!hidden lg:!inline-flex" (click)="openBackgroundTasks()" [matTooltip]="I18N.tasks.title | translate" [attr.aria-label]="I18N.tasks.title | translate">
+              <mat-icon>pending_actions</mat-icon>
+            </button>
           }
           @if (store.config()?.features?.show_memories && hasMemories()) {
             <button mat-icon-button class="!hidden lg:!inline-flex" (click)="playMemories()" [matTooltip]="I18N.memories.tooltip | translate" [attr.aria-label]="I18N.nav.memories | translate">
@@ -210,12 +216,6 @@
           </button>
         }
 
-        <button mat-button class="!hidden lg:!inline-flex" (click)="store.toggleSelectionMode()"
-                [attr.aria-pressed]="store.isSelecting()" data-selection-toggle>
-          <mat-icon>{{ store.isSelecting() ? 'close' : 'checklist' }}</mat-icon>
-          {{ (store.isSelecting() ? 'gallery.selection.exit_mode' : 'gallery.selection.enter_mode') | translate }}
-        </button>
-
         <button
           class="!hidden lg:!inline-flex"
           mat-icon-button
@@ -226,6 +226,13 @@
           <mat-icon>{{
             store.filters().sort_direction === 'DESC' ? 'arrow_downward' : 'arrow_upward'
           }}</mat-icon>
+        </button>
+
+        <button mat-icon-button class="!hidden lg:!inline-flex" (click)="store.toggleSelectionMode()"
+                [matTooltip]="(store.isSelecting() ? 'gallery.selection.exit_mode' : 'gallery.selection.enter_mode') | translate"
+                [attr.aria-label]="(store.isSelecting() ? 'gallery.selection.exit_mode' : 'gallery.selection.enter_mode') | translate"
+                [attr.aria-pressed]="store.isSelecting()" data-selection-toggle>
+          <mat-icon>{{ store.isSelecting() ? 'close' : 'checklist' }}</mat-icon>
         </button>
 
         <button
@@ -490,17 +497,18 @@
           </mat-select>
         </mat-form-field>
 
-        <button mat-button class="!h-10 shrink-0" (click)="store.toggleSelectionMode()"
-                [attr.aria-pressed]="store.isSelecting()" data-selection-toggle>
-          <mat-icon>{{ store.isSelecting() ? 'close' : 'checklist' }}</mat-icon>
-          {{ (store.isSelecting() ? 'gallery.selection.exit_mode' : 'gallery.selection.enter_mode') | translate }}
-        </button>
-
         <!-- Sort direction toggle -->
         <button mat-icon-button class="!w-10 !h-10 shrink-0" (click)="toggleSortDirection()"
           [matTooltip]="store.filters().sort_direction === 'DESC' ? (I18N.gallery.sort_desc | translate) : (I18N.gallery.sort_asc | translate)"
           [attr.aria-label]="store.filters().sort_direction === 'DESC' ? (I18N.gallery.sort_desc | translate) : (I18N.gallery.sort_asc | translate)">
           <mat-icon>{{ store.filters().sort_direction === 'DESC' ? 'arrow_downward' : 'arrow_upward' }}</mat-icon>
+        </button>
+
+        <button mat-icon-button class="!w-10 !h-10 shrink-0" (click)="store.toggleSelectionMode()"
+                [matTooltip]="(store.isSelecting() ? 'gallery.selection.exit_mode' : 'gallery.selection.enter_mode') | translate"
+                [attr.aria-label]="(store.isSelecting() ? 'gallery.selection.exit_mode' : 'gallery.selection.enter_mode') | translate"
+                [attr.aria-pressed]="store.isSelecting()" data-selection-toggle>
+          <mat-icon>{{ store.isSelecting() ? 'close' : 'checklist' }}</mat-icon>
         </button>
 
         <!-- Slideshow toggle -->

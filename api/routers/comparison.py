@@ -15,21 +15,22 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, create_model, field_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
 
 from api.auth import CurrentUser, get_optional_user, require_edition
 from api.config import (
     VIEWER_CONFIG, _CONFIG_PATH, FACET_SCRIPT,
     get_comparison_mode_settings,
     reload_config, invalidate_stats_cache, server_scoring_config,
+    _photo_types_cache, _photo_types_lock,
 )
 from api.database import get_db
 from api.path_validation import resolve_photo_disk_path
-from api.db_helpers import get_visibility_clause
+from api.db_helpers import get_visibility_clause, select_in_chunks, retry_on_locked
 from api.models.comparison import (
     NextPairResponse, DownloadOptionsResponse, CategoryPrioritiesResponse,
     ScoringContextsResponse, ComparisonStatsResponse, CategoryWeightsResponse,
-    LearnedWeightsResponse, SuggestFiltersResponse, CategoryOverrideResponse,
+    LearnedWeightsResponse, SuggestFiltersResponse, CategoryOverrideResponse, BatchCategoryOverrideResponse,
     WeightSnapshotsResponse, RestoreWeightsResponse,
     PanoramaDetectionSettingsResponse, PanoramaDetectionUpdateResponse,
 )
@@ -135,6 +136,18 @@ class SuggestFiltersBody(BaseModel):
 class OverrideCategoryBody(BaseModel):
     path: str
     category: str
+
+
+class BatchOverrideCategoryBody(BaseModel):
+    paths: list[str] = Field(min_length=1, max_length=10000)
+    category: str
+
+    @field_validator('paths')
+    @classmethod
+    def validate_paths(cls, paths):
+        if any(not path.strip() for path in paths):
+            raise ValueError('Photo paths must not be empty')
+        return list(dict.fromkeys(paths))
 
 
 class ClearCategoryOverrideBody(BaseModel):
@@ -1173,7 +1186,7 @@ def api_comparison_suggest_filters(
     }
 
 
-def _recompute_category_and_aggregate(row, *, category_override=None, scoring_context=None):
+def _recompute_category_and_aggregate(row, *, category_override=None, scoring_context=None, scorer=None):
     """Resolve a photo's category and aggregate together via the real scoring path.
 
     Delegates to ``Facet.calculate_aggregate_logic`` -- the same weighted-sum
@@ -1191,9 +1204,57 @@ def _recompute_category_and_aggregate(row, *, category_override=None, scoring_co
     metrics['category_override'] = category_override
     metrics['scoring_context'] = scoring_context
 
-    scorer = Facet(db_path=DEFAULT_DB_PATH, config_path=str(_CONFIG_PATH), lightweight=True)
+    if scorer is None:
+        scorer = Facet(db_path=DEFAULT_DB_PATH, config_path=str(_CONFIG_PATH), lightweight=True)
     new_score, category = scorer.calculate_aggregate_logic(metrics)
     return category, round(new_score, 2)
+
+
+@router.post("/api/comparison/override_categories", response_model=BatchCategoryOverrideResponse, response_model_exclude_unset=True)
+@retry_on_locked()
+def api_comparison_override_categories(
+    body: BatchOverrideCategoryBody,
+    user: CurrentUser = Depends(require_edition),
+):
+    """批量保存人工分类并同步总分；任一照片不可见或写入失败时整体回滚。"""
+    from db.scoring_overrides import set_photo_scoring_override
+    from processing.scorer import Facet
+
+    config = server_scoring_config()
+    if body.category not in {cat['name'] for cat in config.get_categories()}:
+        raise HTTPException(status_code=400, detail=f'Unknown category: {body.category}')
+
+    user_id = user.user_id if user else None
+    vis_sql, vis_params = get_visibility_clause(user_id)
+    scorer = Facet(db_path=DEFAULT_DB_PATH, config_path=str(_CONFIG_PATH), lightweight=True)
+    with get_db() as conn, conn:
+        # 在读取前取得写锁，使所选照片、已有评分和本次更新处于同一事务。
+        conn.execute('BEGIN IMMEDIATE')
+        rows = list(select_in_chunks(
+            conn, f'SELECT * FROM photos WHERE path IN ({{placeholders}}) AND {vis_sql}',
+            body.paths, after=vis_params,
+        ))
+        if len(rows) != len(body.paths):
+            raise HTTPException(status_code=404, detail='One or more photos were not found')
+
+        for row in rows:
+            category, aggregate = _recompute_category_and_aggregate(
+                row, category_override=body.category, scorer=scorer,
+            )
+            set_photo_scoring_override(
+                conn, row['path'], category_override=body.category,
+                source='manual', created_by=user_id,
+            )
+            conn.execute(
+                'UPDATE photos SET category = ?, aggregate = ? WHERE path = ?',
+                (category, aggregate, row['path']),
+            )
+
+    with _photo_types_lock:
+        _photo_types_cache['data'].clear()
+        _photo_types_cache['expires'] = 0
+    invalidate_stats_cache()
+    return {'success': True, 'updated': len(rows), 'new_category': body.category}
 
 
 @router.post("/api/comparison/override_category", response_model=CategoryOverrideResponse, response_model_exclude_unset=True)

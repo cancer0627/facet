@@ -417,6 +417,10 @@ def create_app() -> FastAPI:
     app.include_router(comparison_router)
     app.include_router(stats_router)
     app.include_router(scan_router)
+    from api.routers.birds import router as birds_router
+    app.include_router(birds_router)
+    from api.routers.tasks import router as tasks_router
+    app.include_router(tasks_router)
     app.include_router(i18n_router)
     app.include_router(search_router)
     app.include_router(albums_router)

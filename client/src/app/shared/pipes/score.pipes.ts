@@ -27,6 +27,7 @@ export class ScoreClassPipe implements PipeTransform {
 export class SortScorePipe implements PipeTransform {
   transform(photo: Photo, sort: string): number | null {
     const val = (photo as unknown as Record<string, unknown>)[sort];
+    if (sort === 'bird_sharpness') return typeof val === 'number' ? val : null;
     return typeof val === 'number' ? val : photo.aggregate;
   }
 }
