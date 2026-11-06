@@ -1,4 +1,7 @@
 import { TestBed } from '@angular/core/testing';
+import { signal } from '@angular/core';
+import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
+import { MatSelectHarness } from '@angular/material/select/testing';
 import { Subject, of, throwError } from 'rxjs';
 import { MAT_DIALOG_DATA, MatDialogRef } from '@angular/material/dialog';
 import { MatSnackBar } from '@angular/material/snack-bar';
@@ -14,16 +17,16 @@ describe('CategoryOverrideDialogComponent', () => {
   let dialogClose: ReturnType<typeof vi.fn>;
   let snackOpen: ReturnType<typeof vi.fn>;
 
-  function build(currentCategory: string | null = 'silhouette', paths?: string[]) {
+  function build(currentCategory: string | null = 'silhouette', paths?: string[], i18n: Partial<I18nService> = { t: (k: string) => k }) {
     get = vi.fn(() => of({ categories: [{ name: 'silhouette' }, { name: 'sports' }, { name: 'fashion' }] }));
-    post = vi.fn(() => of({ success: true, path: '/a.jpg', old_category: 'silhouette', new_category: 'sports', aggregate: 7.42 }));
+    post = vi.fn(() => of({ success: true, path: '/a.jpg', old_category: 'silhouette', new_category: 'sports', aggregate: 7.42, vcg_submission_score: 7.62 }));
     dialogClose = vi.fn();
     snackOpen = vi.fn();
     TestBed.configureTestingModule({
       providers: [
         { provide: ApiService, useValue: { get, post } },
         { provide: MatSnackBar, useValue: { open: snackOpen } },
-        { provide: I18nService, useValue: { t: (k: string) => k } },
+        { provide: I18nService, useValue: i18n },
         { provide: MatDialogRef, useValue: { close: dialogClose } },
         { provide: MAT_DIALOG_DATA, useValue: paths ? { paths } : { path: '/a.jpg', currentCategory } },
       ],
@@ -41,6 +44,31 @@ describe('CategoryOverrideDialogComponent', () => {
     expect(component.loading()).toBe(false);
   });
 
+  for (const batch of [false, true]) {
+    it(`localizes category options and the selection in ${batch ? 'batch' : 'single-photo'} mode`, async () => {
+      const translations = signal<Record<string, string>>({ 'category_names.sports': '体育' });
+      build(null, batch ? ['/a.jpg', '/b.jpg'] : undefined, {
+        translations, t: (key: string) => translations()[key] ?? key,
+      });
+      get.mockReturnValueOnce(of({ categories: [{ name: 'sports' }, { name: 'custom_category' }] }));
+      const fixture = TestBed.createComponent(CategoryOverrideDialogComponent);
+      fixture.detectChanges();
+      await fixture.whenStable();
+      const select = await TestbedHarnessEnvironment.loader(fixture).getHarness(MatSelectHarness);
+
+      await select.open();
+      const options = await select.getOptions();
+      expect(await Promise.all(options.map(option => option.getText()))).toEqual(['体育', 'Custom Category']);
+      await select.clickOptions({ text: '体育' });
+      expect(await select.getValueText()).toBe('体育');
+      expect((fixture.componentInstance as any).selectedCategory()).toBe('sports');
+
+      translations.set({ 'category_names.sports': 'Sports' });
+      fixture.detectChanges();
+      expect(await select.getValueText()).toBe('Sports');
+    });
+  }
+
   it('falls back to the first category when no current category is set', async () => {
     build(null);
     await component.ngOnInit();
@@ -56,7 +84,7 @@ describe('CategoryOverrideDialogComponent', () => {
     await component.save();
 
     expect(post).toHaveBeenCalledWith('/comparison/override_category', { path: '/a.jpg', category: 'sports' });
-    expect(dialogClose).toHaveBeenCalledWith({ category: 'sports', aggregate: 7.42 });
+    expect(dialogClose).toHaveBeenCalledWith({ category: 'sports', aggregate: 7.42, vcg_submission_score: 7.62 });
   });
 
   it('does not close on save error', async () => {

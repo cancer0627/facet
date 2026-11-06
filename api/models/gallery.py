@@ -107,6 +107,9 @@ class Photo(BaseModel):
     bird_status: Optional[str] = None
     bird_version: Optional[str] = None
     bird_score_outdated: CoercedInt = None
+    bird_assessment: Optional[str] = None
+    bird_assessment_reason: Optional[str] = None
+    bird_focus_score: Optional[float] = None
     star_rating: CoercedInt = None
     is_favorite: CoercedInt = None
     is_rejected: CoercedInt = None

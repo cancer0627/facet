@@ -46,7 +46,7 @@ describe('PhotoCardComponent', () => {
 
   it('opens bird results from the score badge without selecting or downloading the photo', () => {
     fixture.componentInstance.sort.set('bird_sharpness');
-    fixture.componentInstance.photo.set(makePhoto({ bird_sharpness: 5.25, bird_status: 'scored' }));
+    fixture.componentInstance.photo.set(makePhoto({ bird_sharpness: 5.25, bird_focus_score: 5.25, bird_status: 'scored', bird_assessment: 'review' }));
     fixture.detectChanges();
     const card = getCard();
     const open = vi.fn();
@@ -56,7 +56,8 @@ describe('PhotoCardComponent', () => {
     card.selectionChange.subscribe(select);
     card.doubleClicked.subscribe(download);
     const button = fixture.nativeElement.querySelector('[aria-label="birds.details"]') as HTMLButtonElement;
-    expect(button.textContent).toContain('5.25');
+    expect(button.textContent).toContain('5.3');
+    expect(button.textContent).not.toMatch(/\/ 10(?:0)?\b/);
     button.click();
     expect(open).toHaveBeenCalledWith(card.photo());
     expect(select).not.toHaveBeenCalled();

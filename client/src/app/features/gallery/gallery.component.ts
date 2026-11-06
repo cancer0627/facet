@@ -1285,7 +1285,6 @@ export class GalleryComponent implements OnInit, OnDestroy {
       await firstValueFrom(this.api.post('/culling-groups/manual', { paths }));
       this.clearSelection();
       this.snackBar.open(this.i18n.t('culling.manual.saved'), '', { duration: 3000 });
-      await this.router.navigate(['/culling'], { queryParams: { group_by: 'manual' } });
     } catch {
       this.snackBar.open(this.i18n.t('culling.manual.save_error'), '', { duration: 5000 });
     } finally {

@@ -5,6 +5,7 @@ import os
 import sqlite3
 import time
 from contextlib import contextmanager
+from io import BytesIO
 from unittest import mock
 
 import numpy as np
@@ -13,9 +14,10 @@ from PIL import Image, ImageFilter
 
 from db.schema import init_database
 from models.bird_detector import (
-    BirdDetector, MODEL_ID, detection_windows, local_sharpness, merge_detections, score_detections, select_eligible_birds,
+    BirdDetector, MODEL_ID, detection_windows, guard_frame_edges, local_sharpness, merge_detections,
+    score_detections, select_eligible_birds,
 )
-from models.bird_instances import instance_windows, merge_instances
+from models.bird_instances import BirdInstanceSegmenter, instance_windows, merge_instances
 from models.bird_focus import FOCUS_CHECK_VERSION
 from processing.bird_detection import connect, get_job, result_version, run_job, source_signature
 
@@ -140,9 +142,63 @@ def test_original_frame_wing_fragment_cannot_win_even_with_clear_internal_detail
             {'box': [200, 100, 320, 150], 'confidence': .99, '_mask': np.ones((64, 64), dtype=bool)},
             masked_detection([50, 100, 150, 250], .8),
         ])
-    assert result['birds'][0]['sharpness'] is None
-    assert result['birds'][0]['reason'] == 'frame_edge'
+    assert result['birds'][0]['sharpness'] == 9.3
+    assert result['birds'][0]['exclusion_reason'] == 'frame_edge'
     assert result['best_index'] == 1
+
+
+@pytest.mark.parametrize('bbox', [
+    [10 / 7952, .2, .3, .4], [.2, 10 / 5304, .4, .4],
+    [.7, .2, 1 - 10 / 7952, .4], [.1678822938, .7986425339, .4610160966, .9981146305],
+])
+def test_large_original_edge_tolerance_uses_detection_scale_on_every_side(bbox):
+    details = {'width': 7952, 'height': 5304, 'birds': [
+        {'bbox': bbox, 'sharpness': 9.3, 'width': 2331, 'height': 1058, 'focus_verified': True},
+        {'bbox': [.3, .5, .43, .74], 'sharpness': 2., 'width': 1034, 'height': 1273,
+         'focus_verified': True},
+    ]}
+    result = guard_frame_edges(details, 1)
+    assert result['score'] == 2. and result['best_index'] == 1
+    assert result['birds'][0]['sharpness'] == 9.3
+    assert result['birds'][0]['exclusion_reason'] == 'frame_edge'
+    assert not result['birds'][0]['eligible']
+    assert 'frame_edge' not in details['birds'][0]
+    # 降低大小门槛不能让残缺主体重新决定照片分数。
+    assert select_eligible_birds(result, 0)['score'] == 2.
+    assert guard_frame_edges(result, 0)['score'] == 2.
+
+
+def test_explicit_local_detection_scale_keeps_an_inset_complete_candidate():
+    details = {'width': 7952, 'height': 5304, 'birds': [
+        {'bbox': [.2, .2, .4, 1 - 20 / 5304], 'sharpness': 9.3, 'width': 1590, 'height': 4223,
+         'frame_margin': [6., 6.]},
+    ]}
+    result = guard_frame_edges(details)
+    assert result['score'] == 9.3 and result['birds'][0]['frame_edge'] is False
+    details['birds'][0]['frame_margin'] = [6., 24.]
+    result = guard_frame_edges(details)
+    assert result['score'] is None and result['status'] == 'unjudgeable'
+    assert result['birds'][0]['sharpness'] == 9.3
+
+
+def test_segmentation_carries_actual_resize_scale_to_scoring():
+    import torch
+
+    detector = BirdInstanceSegmenter(None)
+    detector.bird_label = 16
+    detector.model = mock.Mock(return_value=[{
+        'labels': torch.tensor([16]), 'scores': torch.tensor([.9]),
+        'boxes': torch.tensor([[100., 100., 300., 255.]]),
+        'masks': torch.ones((1, 1, 256, 768)),
+    }])
+    image = Image.new('RGB', (6000, 2000))
+    detections = detector._detect_window(image, (0, 0, 6000, 2000))
+    assert detections[0]['frame_margin'] == [3 * 6000 / 768, 3 * 2000 / 256]
+    with mock.patch('models.bird_detector.local_sharpness', return_value=9.3):
+        result = score_detections(image, detections)
+    assert result['birds'][0]['frame_margin'] == detections[0]['frame_margin']
+    assert result['score'] is None
+    assert result['birds'][0]['exclusion_reason'] == 'frame_edge'
 
 
 def test_mask_deduplication_keeps_crossing_birds_and_rejects_a_wing_fragment():
@@ -275,8 +331,8 @@ def library(tmp_path, monkeypatch):
     monkeypatch.setattr(birds, 'get_visibility_clause', lambda user_id: ('1=1', []))
     monkeypatch.setattr('api.routers.scan._recompute_conflict_detail', lambda: None)
     monkeypatch.setattr(birds, '_processes', {})
-    # 此组假检测器验证任务编排；真实轮廓与失焦对照由 test_bird_focus.py 独立覆盖。
-    def fake_focus(image, result, min_area_percent):
+    # 此组假检测器验证任务编排；真实头眼与失焦对照由 test_bird_focus.py 独立覆盖。
+    def fake_focus(image, result, min_area_percent, **kwargs):
         result = dict(result)
         result['birds'] = [dict(bird) for bird in result['birds']]
         for bird in result['birds']:
@@ -346,6 +402,27 @@ def test_third_version_details_are_reselected_without_running_detection(library)
     assert row['bird_sharpness'] == 7.68 and row['bird_version'] == result_version(True)
 
 
+def test_fifth_version_edge_fragment_is_reselected_without_models_or_original_decode(library):
+    db_path, paths = library
+    details = mixed_size_details()
+    details['width'], details['height'] = 7952, 5304
+    details['birds'][0].update(bbox=[.168, .799, .461, .9981], width=2331, height=1058)
+    for bird in details['birds']:
+        bird.update(focus_verified=True, focus_check_version=FOCUS_CHECK_VERSION)
+    with connect(db_path) as conn:
+        conn.execute('UPDATE photos SET bird_status=?,bird_version=?,bird_source_signature=?,bird_detection_json=? WHERE path=?',
+                     ('scored', f'{MODEL_ID}:bird-interior-edge-width-v5:tiled=1:min_area=1',
+                      source_signature(paths[0]), json.dumps(details), paths[0]))
+    seed_job(db_path, paths[:1])
+    with mock.patch.object(FakeDetector, 'load', side_effect=AssertionError('reuse cached detail')):
+        run_job(db_path, 'test-job', FakeDetector, mock.Mock(side_effect=AssertionError('no decode needed')), str)
+    assert get_job(db_path, 'test-job')['succeeded'] == 1
+    with connect(db_path) as conn:
+        row = conn.execute('SELECT bird_sharpness,bird_version,bird_detection_json FROM photos WHERE path=?', (paths[0],)).fetchone()
+    assert row['bird_sharpness'] == 7.68 and row['bird_version'] == result_version(True)
+    assert json.loads(row['bird_detection_json'])['birds'][0]['exclusion_reason'] == 'frame_edge'
+
+
 @pytest.mark.parametrize('tiled,recompute', [(False, False), (True, True)])
 def test_changed_detection_mode_or_forced_detection_does_not_reuse_details(library, tiled, recompute):
     db_path, paths = library
@@ -368,7 +445,7 @@ def test_older_focus_estimates_are_rechecked_without_loading_detection_models(li
                       source_signature(paths[0]), json.dumps(details), paths[0]))
     calls = []
 
-    def reject_focus(image, result, minimum):
+    def reject_focus(image, result, minimum, **kwargs):
         calls.append(image.size)
         for bird in result['birds']:
             bird.update(focus_verified=False, focus_check_version=FOCUS_CHECK_VERSION)
@@ -383,6 +460,140 @@ def test_older_focus_estimates_are_rechecked_without_loading_detection_models(li
         row = conn.execute('SELECT bird_status,bird_sharpness,bird_detection_json FROM photos WHERE path=?', (paths[0],)).fetchone()
     assert row['bird_status'] == 'unjudgeable' and row['bird_sharpness'] is None
     assert json.loads(row['bird_detection_json'])['birds'][1]['sharpness'] == 7.68
+
+
+def test_sixth_version_outline_score_is_replaced_by_real_head_eye_measurement_and_cached(library, monkeypatch):
+    from models.bird_focus import verify_focus
+    from tests.test_bird_focus import KnownLandmarks, focus_scene
+
+    db_path, paths = library
+    image, details = focus_scene(head_blur=4)
+    image.save(paths[0])
+    details['birds'][0].update(focus_verified=True, focus_check_version='outline-step-v1')
+    with connect(db_path) as conn:
+        conn.execute('UPDATE photos SET bird_status=?,bird_version=?,bird_source_signature=?,bird_detection_json=? '
+                     'WHERE path=?', ('scored', f'{MODEL_ID}:bird-interior-edge-width-v6:tiled=1:min_area=1',
+                                     source_signature(paths[0]), json.dumps(details), paths[0]))
+    detector = KnownLandmarks()
+    monkeypatch.setattr('processing.bird_detection.verify_focus', verify_focus)
+    monkeypatch.setattr('processing.bird_detection.BirdLandmarkDetector', lambda **kwargs: detector)
+    seed_job(db_path, paths[:1])
+    with mock.patch.object(FakeDetector, 'load', side_effect=AssertionError('reuse bird segmentation')):
+        run_job(db_path, 'test-job', FakeDetector, Image.open, str)
+    with connect(db_path) as conn:
+        row = conn.execute('SELECT bird_sharpness,bird_detection_json,bird_version FROM photos WHERE path=?',
+                           (paths[0],)).fetchone()
+    result = json.loads(row['bird_detection_json'])
+    assert row['bird_sharpness'] < 4 and row['bird_version'] == result_version(True)
+    assert result['birds'][0]['body_sharpness'] == 9.3 and result['score_basis'] == 'bird_head_eye'
+    assert detector.calls == 1
+    seed_job(db_path, paths[:1], job_id='repeat')
+    run_job(db_path, 'repeat', FakeDetector, mock.Mock(side_effect=AssertionError('cached image')), str)
+    assert get_job(db_path, 'repeat')['skipped'] == 1 and detector.calls == 1
+
+
+def test_seventh_version_failed_head_is_retried_with_refinement_and_oriented_original(library, monkeypatch):
+    from models.bird_focus import verify_focus
+    from tests.test_bird_focus import RefinedLandmarks, focus_scene
+
+    db_path, paths = library
+    image, details = focus_scene(head_blur=4)
+    # 模拟相机将横向像素保存为需按元数据旋转的原图；定位使用显示方向。
+    raw = image.transpose(Image.Transpose.ROTATE_270)
+    exif = Image.Exif()
+    exif[274] = 8
+    raw.save(paths[0], exif=exif)
+    details['score_basis'] = 'bird_head_eye'
+    details['birds'][0].update(sharpness=None, body_sharpness=9.3, reason='head_unlocalized',
+                               focus_verified=False, focus_check_version='head-eye-v1')
+    with connect(db_path) as conn:
+        conn.execute('UPDATE photos SET bird_status=?,bird_version=?,bird_source_signature=?,bird_detection_json=? '
+                     'WHERE path=?', ('unjudgeable', f'{MODEL_ID}:bird-head-eye-edge-width-v7:tiled=1:min_area=1',
+                                     source_signature(paths[0]), json.dumps(details), paths[0]))
+    detector = RefinedLandmarks()
+    monkeypatch.setattr('processing.bird_detection.verify_focus', verify_focus)
+    monkeypatch.setattr('processing.bird_detection.BirdLandmarkDetector', lambda **kwargs: detector)
+    seed_job(db_path, paths[:1])
+    with mock.patch.object(FakeDetector, 'load', side_effect=AssertionError('reuse original bird locations')):
+        run_job(db_path, 'test-job', FakeDetector, resolver=str)
+    assert get_job(db_path, 'test-job')['status'] == 'completed'
+    with connect(db_path) as conn:
+        row = conn.execute('SELECT bird_status,bird_sharpness,bird_detection_json,bird_version FROM photos WHERE path=?',
+                           (paths[0],)).fetchone()
+    assert row['bird_status'] == 'scored' and row['bird_sharpness'] < 4
+    assert row['bird_version'] == result_version(True) and detector.refine_calls == 1
+    result = json.loads(row['bird_detection_json'])
+    assert result['birds'][0]['body_sharpness'] == 9.3
+    assert result['birds'][0]['focus_evidence']['landmarks']['support_views'] == ['original', 'isolated']
+
+
+def test_eighth_version_consistent_but_wrong_eye_is_rechecked_without_bird_redetection(library, monkeypatch):
+    from models.bird_focus import verify_focus
+    from tests.test_bird_focus import KnownLandmarks, focus_scene
+
+    db_path, paths = library
+    image, details = focus_scene()
+    image.save(paths[0])
+    details['score_basis'] = 'bird_head_eye'
+    details['birds'][0].update(body_sharpness=9.3, focus_verified=True, focus_check_version='head-eye-v2')
+    with connect(db_path) as conn:
+        conn.execute('UPDATE photos SET bird_status=?,bird_version=?,bird_source_signature=?,bird_detection_json=? '
+                     'WHERE path=?', ('scored', f'{MODEL_ID}:bird-head-eye-edge-width-v8:tiled=1:min_area=1',
+                                     source_signature(paths[0]), json.dumps(details), paths[0]))
+    detector = KnownLandmarks()
+    for point in detector.points:
+        point[1] -= 136 / 480
+    detector.views = [list(map(list, detector.points)), list(map(list, detector.points))]
+    monkeypatch.setattr('processing.bird_detection.verify_focus', verify_focus)
+    monkeypatch.setattr('processing.bird_detection.BirdLandmarkDetector', lambda **kwargs: detector)
+    seed_job(db_path, paths[:1])
+    with mock.patch.object(FakeDetector, 'load', side_effect=AssertionError('reuse bird segmentation')):
+        run_job(db_path, 'test-job', FakeDetector, Image.open, str)
+    with connect(db_path) as conn:
+        row = conn.execute('SELECT bird_version,bird_detection_json FROM photos WHERE path=?', (paths[0],)).fetchone()
+    result = json.loads(row['bird_detection_json'])
+    assert result['score'] > 8 and row['bird_version'] == result_version(True)
+    eye = result['birds'][0]['focus_evidence']['eyes'][0]
+    np.testing.assert_allclose(np.asarray(eye['centre']) * image.size, [304, 276], atol=3)
+    assert eye['verification']['selected_centre'] is not None and detector.calls == 1
+    seed_job(db_path, paths[:1], job_id='repeat-verified')
+    run_job(db_path, 'repeat-verified', FakeDetector, mock.Mock(side_effect=AssertionError('reuse verified eye')), str)
+    assert get_job(db_path, 'repeat-verified')['skipped'] == 1 and detector.calls == 1
+
+
+def test_upgrade_with_all_birds_below_size_threshold_never_publishes_body_scores(library, monkeypatch):
+    from models.bird_focus import verify_focus
+
+    db_path, paths = library
+    details = mixed_size_details()
+    with connect(db_path) as conn:
+        conn.execute('UPDATE photos SET bird_status=?,bird_version=?,bird_source_signature=?,bird_detection_json=? '
+                     'WHERE path=?', ('scored', f'{MODEL_ID}:bird-interior-edge-width-v6:tiled=1:min_area=1',
+                                     source_signature(paths[0]), json.dumps(details), paths[0]))
+    monkeypatch.setattr('processing.bird_detection.verify_focus', verify_focus)
+    seed_job(db_path, paths[:1], min_area_percent=99)
+    run_job(db_path, 'test-job', FakeDetector, mock.Mock(side_effect=AssertionError('no decode needed')), str)
+    with connect(db_path) as conn:
+        row = conn.execute('SELECT bird_sharpness,bird_detection_json FROM photos WHERE path=?', (paths[0],)).fetchone()
+    result = json.loads(row['bird_detection_json'])
+    assert row['bird_sharpness'] is None and result['excluded_small_count'] == 2
+    assert all(bird['sharpness'] is None and bird['body_sharpness'] > 7 for bird in result['birds'])
+    assert result['score_basis'] == 'bird_head_eye'
+
+
+def test_head_model_load_failure_stops_job_without_overwriting_photo_results(library, monkeypatch):
+    from models.bird_landmarks import BirdLandmarkLoadError
+
+    db_path, paths = library
+    seed_job(db_path, paths)
+    def unavailable(*args, **kwargs):
+        raise BirdLandmarkLoadError('unavailable')
+    monkeypatch.setattr('processing.bird_detection.verify_focus', unavailable)
+    run_job(db_path, 'test-job', FakeDetector, Image.open, str)
+    job = get_job(db_path, 'test-job')
+    assert job['status'] == 'failed' and job['completed'] == 0 and job['failed'] == 0
+    with connect(db_path) as conn:
+        assert conn.execute('SELECT COUNT(*) FROM photos WHERE bird_status IS NOT NULL').fetchone()[0] == 0
 
 
 def test_worker_updates_only_selected_photos_and_preserves_existing_scores(library):
@@ -442,6 +653,38 @@ def test_cancelled_job_keeps_completed_results_and_can_be_resumed(library):
     run_job(db_path, 'resumed', FakeDetector, Image.open, str)
     job = get_job(db_path, 'resumed')
     assert job['skipped'] == 1 and job['succeeded'] == 2 and job['completed'] == 3
+
+
+def test_same_cancelled_job_resumes_after_saved_progress_without_repeating_forced_detection(library):
+    db_path, paths = library
+    seed_job(db_path, paths, recompute=True)
+
+    class StopAfterFirst(FakeDetector):
+        def detect(self, image):
+            with connect(db_path) as conn:
+                conn.execute("UPDATE bird_detection_jobs SET cancel_requested=1 WHERE id='test-job'")
+            return super().detect(image)
+
+    run_job(db_path, 'test-job', StopAfterFirst, Image.open, str)
+    assert get_job(db_path, 'test-job')['completed'] == 1
+    with connect(db_path) as conn:
+        conn.execute('UPDATE photos SET bird_version=? WHERE path=?', ('saved-prefix', paths[0]))
+    run_job(db_path, 'test-job', FakeDetector, Image.open, str, resume=True)
+    job = get_job(db_path, 'test-job')
+    assert (job['status'], job['completed'], job['succeeded'], job['failed'], job['skipped']) == ('completed', 3, 3, 0, 0)
+    assert job['cancel_requested'] == 0
+    with connect(db_path) as conn:
+        assert conn.execute('SELECT bird_version FROM photos WHERE path=?', (paths[0],)).fetchone()[0] == 'saved-prefix'
+
+
+def test_running_job_cannot_be_started_again_with_resume(library):
+    db_path, paths = library
+    seed_job(db_path, paths)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE bird_detection_jobs SET status='running' WHERE id='test-job'")
+    with mock.patch.object(FakeDetector, 'load', side_effect=AssertionError('already running')):
+        run_job(db_path, 'test-job', FakeDetector, Image.open, str, resume=True)
+    assert get_job(db_path, 'test-job')['status'] == 'running'
 
 
 def test_failed_photo_does_not_stop_the_remaining_selection(library):
@@ -553,6 +796,67 @@ def test_photo_preview_and_stale_results(library, edition_client, monkeypatch):
     Image.new('RGB', (120, 120)).save(paths[0])
     assert edition_client.get('/api/birds/photo', params={'path': paths[0]}).json()['stale'] is True
     assert edition_client.get('/api/birds/preview', params={'path': paths[0]}).status_code == 409
+
+
+def test_three_way_assessment_matches_details_and_gallery_and_invalidates_changed_original(library, edition_client, monkeypatch):
+    from api.db_helpers import build_photo_select_columns, sanitize_float_values
+    from models.bird_landmarks import LANDMARK_MODEL_ID
+    from processing.bird_detection import save_result
+
+    db_path, paths = library
+    Image.new('RGB', (1000, 1000), 'white').save(paths[0])
+    monkeypatch.setattr('api.path_validation.resolve_photo_disk_path', lambda path: path)
+    bird = {'bbox': [.2, .2, .8, .8], 'sharpness': 8.62, 'focus_verified': True,
+            'focus_check_version': FOCUS_CHECK_VERSION, 'mask_outline': [[[.2, .2], [.8, .2], [.8, .8]]],
+            'focus_evidence': {'landmarks': {'model': LANDMARK_MODEL_ID}, 'reason': None,
+                               'eyes': [{'centre': [.4, .4], 'head_score': 8.62, 'eye_score': 8.62,
+                                         'verification': {'selected_centre': [400, 400], 'selected_diameter': 30}}]}}
+    result = {'status': 'scored', 'count': 1, 'birds': [bird], 'width': 1000, 'height': 1000, 'score': 8.62}
+    save_result(db_path, paths[0], result, source_signature(paths[0]), result_version(True))
+
+    def gallery_row():
+        with connect(db_path) as conn:
+            cols = build_photo_select_columns(conn)
+            row = dict(conn.execute('SELECT ' + ','.join(cols) + ' FROM photos WHERE path=?', (paths[0],)).fetchone())
+        sanitize_float_values([row])
+        assert '_bird_detection' not in row and '_bird_source_signature' not in row
+        return row
+
+    assert edition_client.get('/api/birds/photo', params={'path': paths[0]}).json()['assessment'] == 'pass'
+    assert gallery_row()['bird_assessment'] == 'pass'
+    assert gallery_row()['bird_focus_score'] == 8.62
+    assert edition_client.get('/api/birds/photo', params={'path': paths[0]}).json()['focus_score'] == 8.62
+    Image.new('RGB', (1100, 1000), 'black').save(paths[0])
+    detail = edition_client.get('/api/birds/photo', params={'path': paths[0]}).json()
+    assert detail['assessment'] == 'review' and detail['assessment_reason'] == 'stale'
+    assert gallery_row()['bird_assessment'] == 'review'
+    assert gallery_row()['bird_focus_score'] is None
+    with connect(db_path) as conn:
+        assert conn.execute('SELECT bird_sharpness FROM photos WHERE path=?', (paths[0],)).fetchone()[0] == 8.62
+
+
+def test_crop_preview_draws_actual_head_and_eye_measurement_regions(library, edition_client, monkeypatch):
+    db_path, paths = library
+    Image.new('RGB', (160, 160), (180, 180, 180)).save(paths[0])
+    seed_job(db_path, paths[:1])
+    run_job(db_path, 'test-job', FakeDetector, Image.open, str)
+    with connect(db_path) as conn:
+        row = conn.execute('SELECT bird_detection_json FROM photos WHERE path=?', (paths[0],)).fetchone()
+        result = json.loads(row[0])
+        result['birds'][0]['focus_evidence'] = {'eyes': [
+            {'centre': [.5, .5], 'eye_radius': 16, 'head_radius': 32},
+        ]}
+        conn.execute('UPDATE photos SET bird_detection_json=? WHERE path=?', (json.dumps(result), paths[0]))
+    monkeypatch.setattr('api.path_validation.resolve_photo_disk_path', lambda path: path)
+    response = edition_client.get('/api/birds/preview', params={'path': paths[0], 'index': 0})
+    assert response.status_code == 200
+    with Image.open(BytesIO(response.content)) as crop:
+        pixels = np.asarray(crop).astype(int)
+    # 裁剪从原图 (4, 4) 开始，原图中心 (80, 80) 应变为裁剪中的 (76, 76)。
+    head = pixels[43:47, 74:79]
+    eye = pixels[59:63, 74:79]
+    assert np.any(head[:, :, 2] > head[:, :, 0] + 50)
+    assert np.any(eye[:, :, 0] > eye[:, :, 1] + 60)
 
 
 def test_gallery_filters_scope_scores_and_owner(library):

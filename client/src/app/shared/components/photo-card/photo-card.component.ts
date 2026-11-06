@@ -158,8 +158,9 @@ const DEFAULT_CLIPPING_BADGE_PERCENT = 5;
                   (dblclick)="$event.stopPropagation()" (keydown.enter)="$event.stopPropagation()" (keydown.space)="$event.stopPropagation()">
             <mat-icon class="!text-base !w-4 !h-4" aria-hidden="true">center_focus_strong</mat-icon>
             @if (photo().bird_score_outdated) { {{ 'birds.old_badge' | translate }} }
-            @else if (photo().bird_sharpness === null || photo().bird_sharpness === undefined) { — }
-            @else { {{ (photo().bird_sharpness ?? null) | fixed:2 }} }
+            @else if (photo().bird_focus_score !== null && photo().bird_focus_score !== undefined) {
+              {{ photo().bird_focus_score | fixed:1 }}
+            } @else { {{ 'birds.assessment.review' | translate }} }
           </button>
         }
         <img

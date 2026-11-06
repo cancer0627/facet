@@ -7,12 +7,14 @@ import { BackgroundTasksDialogComponent } from './background-tasks-dialog.compon
 describe('BackgroundTasksDialogComponent', () => {
   let component: any;
   let get: ReturnType<typeof vi.fn>;
-  const task = { id: 'bird-1', kind: 'birds', status: 'running', current: 3, total: 10 };
+  let post: ReturnType<typeof vi.fn>;
+  const task = { id: 'bird-1', kind: 'birds', status: 'running', current: 3, total: 10, can_terminate: true };
 
   function build(response: any = of({ tasks: [task] })) {
     get = vi.fn(() => response);
+    post = vi.fn(() => of({ ...task, status: 'stopping', can_terminate: false }));
     TestBed.configureTestingModule({ providers: [
-      { provide: ApiService, useValue: { get } },
+      { provide: ApiService, useValue: { get, post } },
       { provide: I18nService, useValue: { t: (key: string) => key } },
     ] });
     component = TestBed.runInInjectionContext(() => new BackgroundTasksDialogComponent());
@@ -80,5 +82,61 @@ describe('BackgroundTasksDialogComponent', () => {
     await component.refresh();
     await vi.advanceTimersByTimeAsync(10000);
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it('requests termination and keeps the returned progress without automatic polling', async () => {
+    build();
+    await vi.advanceTimersByTimeAsync(0);
+    await component.terminate(component.tasks()[0]);
+    expect(post).toHaveBeenCalledWith('/tasks/bird-1/terminate', { confirm: true });
+    expect(component.tasks()[0].status).toBe('stopping');
+    expect(component.tasks()[0].current).toBe(3);
+    await component.terminate(component.tasks()[0]);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it('prevents overlapping mutations and refresh while termination is pending', async () => {
+    build();
+    await vi.advanceTimersByTimeAsync(0);
+    const pending = new Subject<any>();
+    post.mockReturnValue(pending);
+    const action = component.terminate(task);
+    await component.terminate(task);
+    await component.refresh();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledTimes(1);
+    pending.next({ ...task, status: 'stopping', can_terminate: false });
+    pending.complete();
+    await action;
+    expect(component.terminating()).toBeNull();
+  });
+
+  it('retains task state after termination failure and allows retry', async () => {
+    build();
+    await vi.advanceTimersByTimeAsync(0);
+    post.mockReturnValueOnce(throwError(() => new Error('offline')));
+    await component.terminate(task);
+    expect(component.actionError()).toBe('tasks.terminate_error');
+    expect(component.tasks()).toEqual([task]);
+    await component.terminate(task);
+    expect(component.actionError()).toBe('');
+    expect(component.tasks()[0].status).toBe('stopping');
+  });
+
+  it('does not update a closed dialog after a pending termination request', async () => {
+    build();
+    await vi.advanceTimersByTimeAsync(0);
+    const pending = new Subject<any>();
+    post.mockReturnValue(pending);
+    const action = component.terminate(task);
+    TestBed.resetTestingModule();
+    pending.next({ ...task, status: 'stopping' });
+    pending.complete();
+    await action;
+    expect(component.tasks()).toEqual([task]);
+    await component.terminate(task);
+    expect(post).toHaveBeenCalledTimes(1);
   });
 });

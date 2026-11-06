@@ -36,4 +36,10 @@ describe('FilterDisplayPipe', () => {
     const filters = { min_score: '5', max_score: '10' };
     expect(pipe.transform(filters, baseDef)).toBe('5-10');
   });
+
+  it('displays decimal score bounds on the same ten-point scale as stored filter values', () => {
+    const filters = { min_score: '7.5', max_score: '8.62' };
+    expect(pipe.transform(filters, baseDef)).toBe('7.5-8.62');
+    expect(filters.min_score).toBe('7.5');
+  });
 });

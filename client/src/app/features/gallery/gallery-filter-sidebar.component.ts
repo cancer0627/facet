@@ -32,7 +32,7 @@ import { folderDisplayName } from '../folders/folders.util';
 import { I18N_KEYS } from '../../core/i18n/keys';
 
 export const ADDITIONAL_FILTERS: AdditionalFilterDef[] = [
-  { id: 'bird_sharpness_range', labelKey: 'birds.score', sectionKey: 'gallery.sidebar.saliency', minKey: 'min_bird_sharpness', maxKey: 'max_bird_sharpness', sliderMin: 0, sliderMax: 10, step: 0.5, spanWidth: 'w-16' },
+  { id: 'bird_sharpness_range', labelKey: 'birds.focus_score', sectionKey: 'gallery.sidebar.saliency', minKey: 'min_bird_sharpness', maxKey: 'max_bird_sharpness', sliderMin: 0, sliderMax: 10, step: 0.5, spanWidth: 'w-16' },
   // Quality
   { id: 'score_range', labelKey: 'gallery.score_range', sectionKey: 'gallery.sidebar.quality', minKey: 'min_score', maxKey: 'max_score', sliderMin: 0, sliderMax: 10, step: 0.5, spanWidth: 'w-16' },
   { id: 'aesthetic_range', labelKey: 'gallery.aesthetic_range', sectionKey: 'gallery.sidebar.quality', minKey: 'min_aesthetic', maxKey: 'max_aesthetic', sliderMin: 0, sliderMax: 10, step: 0.5, spanWidth: 'w-16' },

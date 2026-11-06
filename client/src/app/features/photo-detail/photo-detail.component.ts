@@ -1095,7 +1095,9 @@ export class PhotoDetailComponent extends PhotoDetailBase implements OnInit {
         data: { path: p.path, currentCategory: p.category },
       });
       ref.afterClosed().subscribe((result: CategoryOverrideResult | undefined) => {
-        if (result) this.applyConfirmed(p, { category: result.category, aggregate: result.aggregate });
+        if (result) this.applyConfirmed(p, {
+          category: result.category, aggregate: result.aggregate, vcg_submission_score: result.vcg_submission_score,
+        });
       });
     });
   }
@@ -1103,9 +1105,11 @@ export class PhotoDetailComponent extends PhotoDetailBase implements OnInit {
   protected async clearCategoryOverride(p: Photo): Promise<void> {
     try {
       const res = await firstValueFrom(
-        this.api.post<{ new_category: string; aggregate: number }>('/comparison/clear_category_override', { path: p.path }),
+        this.api.post<{ new_category: string; aggregate: number; vcg_submission_score: number | null }>('/comparison/clear_category_override', { path: p.path }),
       );
-      this.applyConfirmed(p, { category: res.new_category, aggregate: res.aggregate });
+      this.applyConfirmed(p, {
+        category: res.new_category, aggregate: res.aggregate, vcg_submission_score: res.vcg_submission_score,
+      });
       this.snackBar.open(this.i18n.t(I18N.photo.category_override.cleared), '', { duration: 3000 });
     } catch {
       this.snackBar.open(this.i18n.t(I18N.errors.action_failed), '', { duration: 3000 });

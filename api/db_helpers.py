@@ -5,6 +5,7 @@ Database helper functions for the FastAPI API server.
 
 import functools
 import hashlib
+import json
 import logging
 import math
 import os
@@ -761,8 +762,35 @@ def select_in_chunks(conn, sql_format, keys, before=(), after=(), chunk=900):
 
 
 def sanitize_float_values(data):
-    """Replace NaN/Infinity with None in a list of dicts."""
+    """清理非有限数值，并从有效鸟类证据派生选片结论；原始证据不进入列表响应。"""
     for item in data:
+        if '_bird_detection' in item:
+            raw = item.pop('_bird_detection')
+            signature = item.pop('_bird_source_signature', None)
+            from models.bird_assessment import assess_result
+            from models.bird_detector import RESULT_VERSION_PREFIX
+
+            try:
+                evidence = json.loads(raw or '{}')
+                if not isinstance(evidence, dict):
+                    evidence = {}
+            except (TypeError, ValueError):
+                evidence = {}
+            evidence['status'] = item.get('bird_status')
+            evidence['outdated'] = bool(item.get('bird_score_outdated'))
+            current = bool((item.get('bird_version') or '').startswith(RESULT_VERSION_PREFIX)
+                           and signature and item.get('path'))
+            if current:
+                from api.path_validation import resolve_photo_disk_path
+                from processing.bird_detection import source_signature
+                try:
+                    evidence['stale'] = source_signature(resolve_photo_disk_path(item['path'])) != signature
+                except (OSError, HTTPException):
+                    evidence['stale'] = True
+            assessment = assess_result(evidence, current=current)
+            item['bird_assessment'] = assessment['assessment']
+            item['bird_assessment_reason'] = assessment['assessment_reason']
+            item['bird_focus_score'] = assessment['focus_score']
         for key, value in item.items():
             if isinstance(value, float) and (math.isinf(value) or math.isnan(value)):
                 item[key] = None
@@ -811,6 +839,9 @@ def build_photo_select_columns(conn, user_id=None):
             f"CASE WHEN bird_version IS NOT NULL AND substr(bird_version,1,{len(prefix)})!='{prefix}' "
             'THEN 1 ELSE 0 END AS bird_score_outdated'
         )
+    if {'bird_detection_json', 'bird_source_signature'} <= existing_cols:
+        select_cols.extend(['bird_detection_json AS _bird_detection',
+                            'bird_source_signature AS _bird_source_signature'])
     select_cols.append(SEQUENCE_OVERRIDE_SELECT)
     select_cols.append(SEQUENCE_OVERRIDE_PENDING_SELECT)
     return select_cols

@@ -847,7 +847,7 @@ export interface paths {
         put?: never;
         /**
          * Api Comparison Override Categories
-         * @description 批量保存人工分类并同步总分；任一照片不可见或写入失败时整体回滚。
+         * @description 批量保存人工分类，同步总分和申请分；任一照片不可见或写入失败时整体回滚。
          */
         post: operations["api_comparison_override_categories_api_comparison_override_categories_post"];
         delete?: never;
@@ -4116,6 +4116,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tasks/{task_id}/terminate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Terminate Task
+         * @description 终止已核对身份的任务，保留已提交结果；不接受客户端提供的进程编号。
+         */
+        post: operations["terminate_task_api_tasks__task_id__terminate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/timeline": {
         parameters: {
             query?: never;
@@ -4694,6 +4714,11 @@ export interface components {
         };
         /** BackgroundTask */
         BackgroundTask: {
+            /**
+             * Can Terminate
+             * @default false
+             */
+            can_terminate?: boolean;
             /** Current */
             current?: number | null;
             /** Error */
@@ -4810,6 +4835,18 @@ export interface components {
         };
         /** BirdPhotoResult */
         BirdPhotoResult: {
+            /** Assessment */
+            assessment?: string | null;
+            /** Assessment Counts */
+            assessment_counts?: {
+                [key: string]: number;
+            } | null;
+            /** Assessment Index */
+            assessment_index?: number | null;
+            /** Assessment Reason */
+            assessment_reason?: string | null;
+            /** Assessment Version */
+            assessment_version?: string | null;
             /** Bbox */
             bbox?: number[] | null;
             /** Best Index */
@@ -4829,6 +4866,10 @@ export interface components {
             error?: string | null;
             /** Excluded Small Count */
             excluded_small_count?: number | null;
+            /** Focus Score */
+            focus_score?: number | null;
+            /** Focus Score Index */
+            focus_score_index?: number | null;
             /** Focus Unverified Count */
             focus_unverified_count?: number | null;
             /** Height */
@@ -5027,6 +5068,8 @@ export interface components {
             path: string;
             /** Success */
             success: boolean;
+            /** Vcg Submission Score */
+            vcg_submission_score?: number | null;
         };
         /** CategoryPrioritiesBody */
         CategoryPrioritiesBody: {
@@ -6237,8 +6280,14 @@ export interface components {
             aggregate?: number | null;
             /** Bg Separation */
             bg_separation?: number | null;
+            /** Bird Assessment */
+            bird_assessment?: string | null;
+            /** Bird Assessment Reason */
+            bird_assessment_reason?: string | null;
             /** Bird Count */
             bird_count?: number | null;
+            /** Bird Focus Score */
+            bird_focus_score?: number | null;
             /** Bird Score Outdated */
             bird_score_outdated?: number | null;
             /** Bird Sharpness */
@@ -7437,6 +7486,11 @@ export interface components {
             target_filters?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** TaskTerminateBody */
+        TaskTerminateBody: {
+            /** Confirm */
+            confirm: boolean;
         };
         /** TestWebhookRequest */
         TestWebhookRequest: {
@@ -13486,6 +13540,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BackgroundTasksResponse"];
+                };
+            };
+        };
+    };
+    terminate_task_api_tasks__task_id__terminate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskTerminateBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackgroundTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

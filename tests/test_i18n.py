@@ -57,6 +57,14 @@ class TestGetTranslations:
         resp = client.get("/api/i18n/xx")
         assert resp.status_code == 404
 
+    @pytest.mark.parametrize('reason', ['head_unlocalized', 'eye_unverified', 'eye_detail_insufficient'])
+    def test_dynamic_bird_focus_reasons_have_readable_labels(self, client, reason):
+        # 动态拼接的原因名称不会被静态键检查发现，缺失时界面只会显示键名。
+        for language in SUPPORTED_LANGUAGES:
+            bundle = client.get('/api/i18n/' + language).json()
+            label = bundle['birds']['reason'].get(reason)
+            assert isinstance(label, str) and label.strip(), (language, reason)
+
 
 def _flatten(bundle: dict, prefix: str = '') -> dict:
     """Flatten a nested bundle to ``{'a.b.c': value}``.

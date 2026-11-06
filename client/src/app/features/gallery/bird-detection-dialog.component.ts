@@ -47,7 +47,7 @@ const JOB_STORAGE_KEY = 'facet_bird_detection_job';
         <p class="text-sm opacity-70 mt-3">{{ 'birds.resume_hint' | translate }}</p>
       } @else {
         <p class="mb-3">{{ 'birds.description' | translate:{ count: data.paths.length } }}</p>
-        <p class="text-sm opacity-70 mb-3">{{ 'birds.score_hint' | translate }}</p>
+        <p class="text-sm opacity-70 mb-3">{{ 'birds.focus_score_hint' | translate }}</p>
         <label class="block mb-2">
           {{ 'birds.min_area' | translate }}
           <select class="ml-2 p-1 rounded bg-[var(--mat-sys-surface)]" [disabled]="busy()"
@@ -95,6 +95,7 @@ export class BirdDetectionDialogComponent {
   protected readonly areaOptions = [
     { value: 0, label: 'birds.area_all' }, { value: .25, label: 'birds.area_small' },
     { value: 1, label: 'birds.area_medium' }, { value: 3, label: 'birds.area_large' },
+    { value: 7, label: 'birds.area_xlarge' },
   ];
   protected readonly busy = signal(false);
   protected readonly job = signal<BirdJob | null>(null);

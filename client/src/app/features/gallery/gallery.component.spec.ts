@@ -209,7 +209,7 @@ describe('GalleryComponent', () => {
       mockStore.selectionCount.set(paths.length);
     }
 
-    it('creates directly from selected photos and opens manual culling without a dialog', async () => {
+    it('creates directly from selected photos and clears the selection without navigating', async () => {
       select(['/a.jpg', '/b.jpg']);
       mockApi.post.mockReturnValue(of({ group_id: -1, count: 2 }));
       const navigate = vi.spyOn((component as any).router, 'navigate').mockResolvedValue(true);
@@ -217,7 +217,7 @@ describe('GalleryComponent', () => {
       expect(mockApi.post).toHaveBeenCalledWith('/culling-groups/manual', { paths: ['/a.jpg', '/b.jpg'] });
       expect(TestBed.inject(MatDialog).open).not.toHaveBeenCalled();
       expect(mockStore.clearSelection).toHaveBeenCalled();
-      expect(navigate).toHaveBeenCalledWith(['/culling'], { queryParams: { group_by: 'manual' } });
+      expect(navigate).not.toHaveBeenCalled();
     });
 
     it('preserves the selection on failure', async () => {
@@ -232,7 +232,6 @@ describe('GalleryComponent', () => {
       select(['/a.jpg', '/b.jpg']);
       const pending = new Subject<unknown>();
       mockApi.post.mockReturnValue(pending);
-      vi.spyOn((component as any).router, 'navigate').mockResolvedValue(true);
       const first = (component as any).addToCullingGroup();
       await (component as any).addToCullingGroup();
       expect(mockApi.post).toHaveBeenCalledTimes(1);

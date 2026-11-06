@@ -8,9 +8,11 @@ describe('BirdResultsComponent', () => {
   const result = {
     status: 'scored', score: 7.68, count: 2, best_index: 0,
     stale: false, outdated: false, error: null,
+    assessment: 'pass', assessment_reason: 'complete_and_clear', assessment_index: 0,
+    focus_score: 7.68, focus_score_index: 0,
     birds: [
-      { sharpness: 7.68, confidence: .9, width: 400, height: 300 },
-      { sharpness: null, confidence: .8, width: 300, height: 200, reason: 'truncated' },
+      { sharpness: 7.68, confidence: .9, width: 400, height: 300, assessment: 'pass', focus_score: 7.68 },
+      { sharpness: null, confidence: .8, width: 300, height: 200, reason: 'truncated', assessment: 'review' },
     ],
   };
 
@@ -57,7 +59,7 @@ describe('BirdResultsComponent', () => {
   });
 
   it('selects the best bird after asynchronously created options appear', async () => {
-    const fixture = await build({ best_index: 1, birds: [result.birds[1], result.birds[0]] });
+    const fixture = await build({ best_index: 1, assessment_index: 1, focus_score_index: 1, birds: [result.birds[1], result.birds[0]] });
     const element = fixture.nativeElement as HTMLElement;
     element.querySelector('button')!.click();
     fixture.detectChanges();
@@ -78,7 +80,7 @@ describe('BirdResultsComponent', () => {
     expect(element.querySelector('select')).toBeNull();
   });
 
-  it('explains why a tiny sharp bird is excluded while preserving its reference score', async () => {
+  it('explains why a tiny sharp bird is excluded without displaying a reference score', async () => {
     const fixture = await build({ min_area_percent: 1, excluded_small_count: 1, birds: [result.birds[0], {
       sharpness: 9.3, confidence: .9, width: 87, height: 133, area_percent: .027,
       exclusion_reason: 'below_min_area', reason: null,
@@ -94,7 +96,8 @@ describe('BirdResultsComponent', () => {
     fixture.detectChanges();
     expect(element.textContent).toContain('birds.reason.below_min_area');
     expect(element.textContent).toContain('birds.size_metric');
-    expect(select.options[1].textContent).toContain('9.30');
+    expect(select.options[1].textContent).toContain('birds.assessment.review');
+    expect(element.textContent).not.toContain('9.30');
   });
 
   it('labels unsupported focus estimates for review instead of displaying a high grade', async () => {
@@ -110,8 +113,42 @@ describe('BirdResultsComponent', () => {
     select.value = '1';
     select.dispatchEvent(new Event('change'));
     fixture.detectChanges();
-    expect(select.options[1].textContent).toContain('birds.focus_review');
+    expect(select.options[1].textContent).toContain('birds.assessment.review');
     expect(element.textContent).not.toContain('9.30');
     expect(element.textContent).toContain('birds.reason.focus_unverified');
+  });
+
+  it('labels a sharp frame fragment for review without presenting it as a high grade', async () => {
+    const fixture = await build({ birds: [result.birds[0], {
+      sharpness: 9.3, confidence: .99, width: 2331, height: 1058, focus_verified: true,
+      exclusion_reason: 'frame_edge', reason: null,
+    }] });
+    const element = fixture.nativeElement as HTMLElement;
+    element.querySelector('button')!.click();
+    fixture.detectChanges();
+    const select = element.querySelector('select')!;
+    select.value = '1';
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    expect(select.options[1].textContent).toContain('birds.assessment.review');
+    expect(element.textContent).not.toContain('9.30');
+    expect(element.textContent).toContain('birds.reason.frame_edge');
+  });
+
+  it('shows the verified head-eye score on a ten-point scale without a scale suffix instead of the stored whole-bird score', async () => {
+    const fixture = await build({ score: 9.3, focus_score: 2, assessment: 'fail', assessment_reason: 'head_eye_blurred' });
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('birds.focus_score: 2.0');
+    expect(text).not.toContain('birds.assessment.fail');
+    expect(text).not.toContain('9.30');
+    expect(text).not.toMatch(/\/ 10(?:0)?\b/);
+  });
+
+  it('leaves an unmeasurable eye score blank instead of inventing a middle score', async () => {
+    const fixture = await build({ focus_score: null, assessment: 'review', assessment_reason: 'head_eye_uncertain' });
+    const text = fixture.nativeElement.textContent as string;
+    expect(text).toContain('birds.assessment.review');
+    expect(text).toContain('birds.assessment_reason.head_eye_uncertain');
+    expect(text).not.toContain('/ 100');
   });
 });

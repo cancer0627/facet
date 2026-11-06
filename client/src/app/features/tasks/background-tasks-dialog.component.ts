@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { DatePipe } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialogModule } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
@@ -25,6 +26,9 @@ type TasksResponse = components['schemas']['BackgroundTasksResponse'];
       <p class="text-sm opacity-70 mb-4">{{ 'tasks.description' | translate }}</p>
       @if (error()) {
         <p role="alert" class="mb-4 text-[var(--mat-sys-error)]">{{ 'tasks.load_error' | translate }}</p>
+      }
+      @if (actionError()) {
+        <p role="alert" class="mb-4 text-[var(--mat-sys-error)]">{{ actionError() | translate }}</p>
       }
       @if (loading()) {
         <mat-progress-bar mode="indeterminate" />
@@ -64,12 +68,21 @@ type TasksResponse = components['schemas']['BackgroundTasksResponse'];
             @if (task.error) {
               <p class="text-sm mt-2 break-words text-[var(--mat-sys-error)]">{{ task.error }}</p>
             }
+            @if (task.can_terminate) {
+              <div class="flex justify-end mt-2">
+                <button mat-button [disabled]="!!terminating() || refreshing()" (click)="terminate(task)">
+                  {{ (terminating() === task.id ? 'tasks.terminating' : 'tasks.terminate') | translate }}
+                </button>
+              </div>
+            } @else if (active(task) && task.status !== 'stopping') {
+              <p class="text-xs opacity-60 mt-2">{{ 'tasks.control_unavailable' | translate }}</p>
+            }
           </article>
         }
       </div>
     </mat-dialog-content>
     <mat-dialog-actions align="end">
-      <button mat-button [disabled]="refreshing()" (click)="refresh()">{{ 'tasks.refresh' | translate }}</button>
+      <button mat-button [disabled]="refreshing() || !!terminating()" (click)="refresh()">{{ 'tasks.refresh' | translate }}</button>
       <button mat-button mat-dialog-close>{{ 'dialog.close' | translate }}</button>
     </mat-dialog-actions>
   `,
@@ -81,6 +94,8 @@ export class BackgroundTasksDialogComponent {
   protected readonly loading = signal(true);
   protected readonly refreshing = signal(false);
   protected readonly error = signal(false);
+  protected readonly actionError = signal('');
+  protected readonly terminating = signal<string | null>(null);
   protected readonly activeCount = computed(() => this.tasks().filter(task => this.active(task)).length);
   private disposed = false;
 
@@ -113,13 +128,14 @@ export class BackgroundTasksDialogComponent {
   }
 
   protected async refresh(): Promise<void> {
-    if (this.refreshing() || this.disposed) return;
+    if (this.refreshing() || this.terminating() || this.disposed) return;
     this.refreshing.set(true);
     try {
       const response = await firstValueFrom(this.api.get<TasksResponse>('/tasks'));
       if (this.disposed) return;
       this.tasks.set(response.tasks);
       this.error.set(false);
+      this.actionError.set('');
     } catch {
       if (!this.disposed) this.error.set(true);
     } finally {
@@ -127,6 +143,23 @@ export class BackgroundTasksDialogComponent {
         this.loading.set(false);
         this.refreshing.set(false);
       }
+    }
+  }
+
+  protected async terminate(task: BackgroundTask): Promise<void> {
+    if (!task.can_terminate || this.terminating() || this.refreshing() || this.disposed) return;
+    this.terminating.set(task.id);
+    this.actionError.set('');
+    try {
+      const updated = await firstValueFrom(this.api.post<BackgroundTask>(
+        '/tasks/' + encodeURIComponent(task.id) + '/terminate', { confirm: true },
+      ));
+      if (!this.disposed) this.tasks.update(tasks => tasks.map(item => item.id === task.id ? updated : item));
+    } catch (err) {
+      if (!this.disposed) this.actionError.set(err instanceof HttpErrorResponse && [403, 404, 409].includes(err.status)
+        ? 'tasks.action_unavailable' : 'tasks.terminate_error');
+    } finally {
+      if (!this.disposed) this.terminating.set(null);
     }
   }
 }

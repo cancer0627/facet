@@ -2543,9 +2543,9 @@
     "details": "View bird detection result",
     "actions": "Detection and scoring",
     "title": "Bird sharpness detection",
-    "description": "Separate individual birds in {count} selected photos and assess their internal detail. First use downloads about 190 MB of models. Photos stay local; processing is slower than the older version.",
-    "score_hint": "Experimental reference score comparing internal detail with the original bird outline. Insufficient or conflicting evidence requires review and is excluded from photo scoring. Head and eye focus are not separately assessed, and scores are not human-calibrated.",
-    "score": "Best bird sharpness",
+    "description": "Séparer les oiseaux dans {count} photos sélectionnées, localiser les yeux et le bec, puis mesurer leur netteté. Le premier usage télécharge environ 290 Mo de modèles. Les photos restent locales.",
+    "score_hint": "Référence expérimentale de netteté de la tête et des yeux : la note la plus basse entre la région de l’œil et la tête détermine le résultat. Des ailes ou un fond nets ne compensent pas un œil flou. Une localisation incertaine ou des détails insuffisants imposent une vérification sans note. Aucun seuil de réussite n’a été calibré manuellement ; inspectez le recadrage.",
+    "score": "Meilleure netteté admissible de la tête et des yeux",
     "tiled": "Improve small-bird detection",
     "tiled_hint": "Also inspect overlapping image tiles. This takes longer and may still miss small or overlapping birds.",
     "recompute": "Re-detect existing results",
@@ -2565,8 +2565,8 @@
     "detected_count": "Located {count} bird candidates",
     "show_location": "Show bird locations and best crop",
     "location_alt": "Detected bird locations",
-    "box_hint": "Green marks the highest reference score, orange other candidates. Thin outlines show segmented bird regions. Inspect each bird individually.",
-    "crop_alt": "Selected bird crop and segmentation outline",
+    "box_hint": "Le vert marque la meilleure note de tête et d’yeux, l’orange les autres candidats. Les contours fins montrent la segmentation. Dans le recadrage, les cercles roses montrent les zones des yeux et les bleus les zones de tête mesurées.",
+    "crop_alt": "Oiseau recadré avec segmentation et zones de mesure de la tête et des yeux",
     "stale": "The original image changed or is unavailable. Run detection again before using this result.",
     "result_scope": "Showing photos from this detection",
     "leave_results": "Leave these results",
@@ -2580,7 +2580,7 @@
       "cancelled": "Detection stopped; completed results are saved",
       "failed": "Detection failed",
       "selecting_birds": "Selecting from existing bird detections",
-      "verifying_focus": "Checking bird outline and local focus evidence"
+      "verifying_focus": "Localisation de la tête et des yeux et mesure de netteté sur l’original"
     },
     "photo_status": {
       "scored": "Scored",
@@ -2597,9 +2597,12 @@
       "too_small": "Too small to score.",
       "insufficient_detail": "Not enough reliable internal detail to judge sharpness.",
       "low_mask_resolution": "Segmentation is too coarse to judge sharpness reliably.",
-      "frame_edge": "At the original frame edge; the bird may be incomplete and is not scored.",
-      "below_min_area": "This bird is below the size threshold and does not contribute to the photo score. Its local sharpness is shown for reference.",
-      "focus_unverified": "Local detail and the bird outline do not corroborate each other; sharp background may be included. Review this candidate; it does not contribute to the photo score."
+      "frame_edge": "Near the original frame edge; the bird may be incomplete and does not contribute to the photo score. Any local detail estimate is retained for review.",
+      "below_min_area": "Sous le seuil de taille et exclu de la note photo. Le recadrage reste consultable. Abaisser le seuil mesure les nouvelles têtes et les nouveaux yeux admissibles.",
+      "focus_unverified": "La localisation de la tête et des yeux ou les détails ne permettent pas une mesure fiable. Ce candidat doit être vérifié et ne contribue pas à la note photo.",
+      "head_unlocalized": "La confiance, la cohérence entre les vues ou les positions des yeux et du bec sont insuffisantes. Tête et yeux non localisés de façon fiable ; pas de note.",
+      "eye_detail_insufficient": "Tête et yeux localisés, mais détails, taille ou couverture de l’image originale insuffisants pour une note fiable.",
+      "eye_unverified": "La position prédite de l’œil n’a pas été confirmée par sa structure dans l’original et la localisation locale. Vérification requise ; pas de note."
     },
     "min_area": "Minimum bird size for photo scoring",
     "min_area_hint": "Measured as the bounding box area relative to the full photo. Smaller birds remain available to inspect but do not determine the photo score. Changing only this threshold reuses existing detections.",
@@ -2607,19 +2610,46 @@
     "area_small": "Small (at least 0.25%)",
     "area_medium": "Medium (at least 1%, default)",
     "area_large": "Large (at least 3%)",
+    "area_xlarge": "Extra large (at least 7%)",
     "size_rule": "Size threshold: bounding box covers at least {percent}% of the photo",
     "small_excluded": "{count} small candidates are excluded from the photo score and remain available to inspect.",
     "size_metric": "Bounding box: {width} × {height} pixels, {percent}% of the photo",
     "focus_review": "Needs review",
-    "focus_unverified_count": "{count} candidates lack consistent focus evidence and require review. They do not contribute to the photo score."
+    "focus_unverified_count": "{count} candidats sans mesure fiable de la tête et des yeux sont à vérifier. Ils ne contribuent pas à la note photo.",
+    "assessment": {
+      "pass": "Conforme",
+      "fail": "Non conforme",
+      "review": "À vérifier"
+    },
+    "assessment_hint": "Conforme : oiseau entièrement cadré, sans flou évident de la tête ou des yeux. Flou ou cadrage incomplet : non conforme. Vérifiez les cas incertains.",
+    "assessment_reason": {
+      "complete_and_clear": "L’oiseau détecté est entièrement cadré, sans flou évident de la tête ou des yeux visibles.",
+      "body_clipped": "L’oiseau détecté atteint le bord de l’image et ne satisfait pas au cadrage complet.",
+      "body_uncertain": "Le cadrage complet est incertain. Vérifiez les extrémités des ailes, la queue et les occultations.",
+      "head_eye_blurred": "Une zone confirmée de la tête ou d’un œil présente un flou évident.",
+      "head_eye_uncertain": "La position réelle de la tête ou des yeux, ou les détails exploitables, sont incertains. Vérifiez le recadrage.",
+      "focus_borderline": "La netteté de la tête et des yeux est incertaine et doit être vérifiée.",
+      "stale": "L’original a changé ou est indisponible. Relancez la détection.",
+      "outdated": "La détection utilise des règles anciennes. Relancez-la.",
+      "unavailable": "Les données valides manquent. Lancez d’abord la détection.",
+      "below_min_area": "Cet oiseau est sous le seuil de taille et ne détermine pas le résultat.",
+      "no_eligible_bird": "Aucun oiseau évaluable. Vérifiez l’original ou le seuil de taille."
+    },
+    "focus_score": "Netteté tête et yeux",
+    "focus_score_hint": "Seules les mesures vérifiées de la tête et des yeux sont notées ; plus haut signifie plus net. Position, détails ou cadrage incertains : note vide, à vérifier. Ce n’est ni une confiance de détection ni un pourcentage de netteté."
   },
   "tasks": {
     "title": "Tâches en arrière-plan",
-    "description": "Cliquez sur Actualiser pour mettre à jour. Affiche les tâches de la photothèque, vos détections d’oiseaux actives et les 50 dernières terminées.",
+    "description": "Refresh manually to update progress. Supported tasks show a Terminate button. Termination stops remaining work and keeps saved results. Lists library jobs, all your active bird detection tasks, and the 50 most recent finished bird tasks.",
     "empty": "Aucune tâche en arrière-plan.",
     "load_error": "Échec de l’actualisation. Cliquez sur Actualiser pour réessayer.",
     "active_count": "{count} tâche(s) active(s)",
     "refresh": "Actualiser",
+    "terminate": "Terminate",
+    "terminating": "Requesting termination…",
+    "terminate_error": "Could not request termination. Please retry.",
+    "action_unavailable": "The task state or your permissions changed. Refresh the list and retry.",
+    "control_unavailable": "This task is not managed by this service, or you do not have permission to terminate it.",
     "progress": "{current} / {total} traités",
     "progress_unknown": "En cours ; progression non disponible.",
     "kind": {
@@ -2635,9 +2665,9 @@
     "status": {
       "queued": "En attente",
       "running": "En cours",
-      "stopping": "Arrêt en cours",
+      "stopping": "Terminating",
       "completed": "Terminée",
-      "cancelled": "Annulée",
+      "cancelled": "Terminated",
       "failed": "Échec",
       "interrupted": "Interrompue"
     }

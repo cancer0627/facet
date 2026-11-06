@@ -598,7 +598,7 @@ describe('PhotoDetailComponent', () => {
     it('the category override dialog result reaches the store', async () => {
       createComponent();
       seedGrid();
-      mockDialog.open.mockReturnValue({ afterClosed: () => of({ category: 'sports', aggregate: 7.9 }) });
+      mockDialog.open.mockReturnValue({ afterClosed: () => of({ category: 'sports', aggregate: 7.9, vcg_submission_score: 8.29 }) });
       // Warm the loader cache: openCategoryOverride is void and resolves its
       // dynamic import on its own, so the assertions need the module already
       // in hand for a single tick to be enough to see the result applied.
@@ -609,11 +609,13 @@ describe('PhotoDetailComponent', () => {
 
       expect(stored().category).toBe('sports');
       expect(stored().aggregate).toBe(7.9);
+      expect(stored().vcg_submission_score).toBe(8.29);
+      expect(component.photo().vcg_submission_score).toBe(8.29);
     });
 
     it('clearCategoryOverride puts the recomputed category and aggregate in the store', async () => {
       mockApi.post.mockReturnValue(of({
-        success: true, path: edited.path, old_category: 'portrait', new_category: 'landscape', aggregate: 6.8,
+        success: true, path: edited.path, old_category: 'portrait', new_category: 'landscape', aggregate: 6.8, vcg_submission_score: 7.57,
       }));
       createComponent();
       seedGrid();
@@ -622,6 +624,8 @@ describe('PhotoDetailComponent', () => {
 
       expect(stored().category).toBe('landscape');
       expect(stored().aggregate).toBe(6.8);
+      expect(stored().vcg_submission_score).toBe(7.57);
+      expect(component.photo().vcg_submission_score).toBe(7.57);
     });
 
     // Captions had the same split brain the flags did: both writers set only

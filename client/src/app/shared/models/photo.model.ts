@@ -42,6 +42,9 @@ export interface Photo {
   bird_status?: string | null;
   bird_version?: string | null;
   bird_score_outdated?: number | null;
+  bird_assessment?: 'pass' | 'fail' | 'review' | null;
+  bird_assessment_reason?: string | null;
+  bird_focus_score?: number | null;
   subject_prominence?: number | null;
   subject_placement?: number | null;
   bg_separation?: number | null;

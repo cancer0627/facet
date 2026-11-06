@@ -7,9 +7,11 @@ from pathlib import Path
 import numpy as np
 
 MODEL_ID = 'torchvision-ssdlite320-maskrcnn-resnet50-fpn-v2-coco-v1'
-SCORE_VERSION = 'bird-interior-edge-width-v5'
+SCORE_VERSION = 'bird-head-eye-edge-width-v9'
 RESULT_VERSION_PREFIX = f'{MODEL_ID}:{SCORE_VERSION}:tiled='
 DEFAULT_MIN_AREA_PERCENT = 1.0
+INSTANCE_MAX_SIZE = 768
+FRAME_EDGE_MARGIN = 3
 MODEL_DIR = Path(__file__).resolve().parents[1] / 'pretrained_models' / 'birds'
 
 
@@ -46,7 +48,7 @@ def _edge_templates(radius):
     return offsets, np.asarray(templates), np.asarray(widths)
 
 
-def local_sharpness(crop, mask=None):
+def local_sharpness(crop, mask=None, *, edge_percentile=25):
     """估计边缘过渡宽度；提供鸟体掩膜时，只接受完全位于鸟体内的边缘剖面。"""
     import cv2
 
@@ -105,8 +107,8 @@ def local_sharpness(crop, mask=None):
     # 随机噪点和交叉纹理通常无法形成可靠的单调过渡，不凭少数偶合样本给高分。
     if len(sigmas) < max(8, math.ceil(len(xs) * 0.05)):
         return None if mask is not None else 0.0
-    # 取清楚的四分之一边缘，关注最佳细节而非翅膀运动区域的平均。
-    sigma = float(np.percentile(sigmas, 25))
+    # 鸟体诊断保留原统计；头眼使用中位数，避免少数锐利边缘撑起高分。
+    sigma = float(np.percentile(sigmas, edge_percentile))
     return round(10.0 / (1.0 + (sigma / 2.0) ** 2), 2)
 
 
@@ -145,10 +147,14 @@ def select_eligible_birds(result, min_area_percent=DEFAULT_MIN_AREA_PERCENT):
         area = max(0, box[2] - box[0]) * max(0, box[3] - box[1]) * 100
         bird['area_percent'] = round(area, 6)
         enough_area = area + 1e-9 >= min_area_percent
-        bird['eligible'] = bird['sharpness'] is not None and enough_area and bird.get('focus_verified') is not False
+        frame_edge = bird.get('frame_edge', False) or bird.get('reason') == 'frame_edge'
+        bird['eligible'] = (bird['sharpness'] is not None and enough_area
+                            and not frame_edge and bird.get('focus_verified') is not False)
         bird['exclusion_reason'] = (
-            'below_min_area' if bird['sharpness'] is not None and not enough_area else
-            'focus_unverified' if bird['sharpness'] is not None and bird.get('focus_verified') is False else None
+            'frame_edge' if frame_edge else
+            'below_min_area' if not enough_area and (
+                bird['sharpness'] is not None or bird.get('body_sharpness') is not None) else
+            'focus_unverified' if enough_area and bird.get('focus_verified') is False else None
         )
     valid = [(i, bird) for i, bird in enumerate(birds) if bird['eligible']]
     best_index = max(valid, key=lambda item: (
@@ -167,16 +173,19 @@ def select_eligible_birds(result, min_area_percent=DEFAULT_MIN_AREA_PERCENT):
 
 
 def guard_frame_edges(result, min_area_percent=DEFAULT_MIN_AREA_PERCENT):
-    """原图边缘的局部翅膀不代表完整的鸟；可复用已提取细节，无需重复模型推理。"""
+    """按检测尺度排除疑似截断主体；保留局部细节估计，但不让残缺翅膀决定照片得分。"""
     result = dict(result)
     width, height = result['width'], result['height']
     birds = [dict(bird) for bird in result['birds']]
+    # 旧结果未保存分割图比例，按整图最长边缩至 768 的尺度保守复核。
+    legacy_margin = FRAME_EDGE_MARGIN * max(1, max(width, height) / INSTANCE_MAX_SIZE)
     for bird in birds:
         box = bird['bbox']
-        if bird['sharpness'] is not None and (box[0] * width <= 3 or box[1] * height <= 3
-                                             or (1 - box[2]) * width <= 3 or (1 - box[3]) * height <= 3):
-            bird['sharpness'] = None
-            bird['reason'] = 'frame_edge'
+        margin_x, margin_y = bird.get('frame_margin', [legacy_margin, legacy_margin])
+        bird['frame_edge'] = bool(
+            box[0] * width <= margin_x or box[1] * height <= margin_y
+            or (1 - box[2]) * width <= margin_x or (1 - box[3]) * height <= margin_y
+        )
     result['birds'] = birds
     return select_eligible_birds(result, min_area_percent)
 
@@ -211,12 +220,15 @@ def score_detections(image, detections, min_area_percent=DEFAULT_MIN_AREA_PERCEN
                 points = cv2.approxPolyDP(contour, 1.0, True)[:, 0, :]
                 outlines.append([[(x0 + float(x) * (x1 - x0) / mask.shape[1]) / width,
                                   (y0 + float(y) * (y1 - y0) / mask.shape[0]) / height] for x, y in points])
-        birds.append({
+        bird = {
             'bbox': [x0 / width, y0 / height, x1 / width, y1 / height],
             'confidence': round(float(detection['confidence']), 4),
             'sharpness': score, 'width': x1 - x0, 'height': y1 - y0,
             'reason': reason, 'mask_outline': outlines,
-        })
+        }
+        if 'frame_margin' in detection:
+            bird['frame_margin'] = list(detection['frame_margin'])
+        birds.append(bird)
     return guard_frame_edges({
         'width': width, 'height': height, 'birds': birds,
         'score_basis': 'bird_interior',

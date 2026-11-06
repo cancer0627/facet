@@ -19,6 +19,7 @@ export type CategoryOverrideDialogData =
 export interface CategoryOverrideResult {
   category: string;
   aggregate: number;
+  vcg_submission_score: number | null;
 }
 
 export interface BatchCategoryOverrideResult {
@@ -50,7 +51,8 @@ interface CategoryOption {
           <mat-label>{{ I18N.photo.category_override.label | translate }}</mat-label>
           <mat-select [value]="selectedCategory()" [disabled]="saving()" (selectionChange)="selectedCategory.set($event.value)">
             @for (name of categories(); track name) {
-              <mat-option [value]="name">{{ name | categoryLabel }}</mat-option>
+              @let label = ('category_names.' + name) | translate;
+              <mat-option [value]="name">{{ label === 'category_names.' + name ? (name | categoryLabel) : label }}</mat-option>
             }
           </mat-select>
         </mat-form-field>
@@ -107,10 +109,10 @@ export class CategoryOverrideDialogComponent implements OnInit {
         return;
       }
       const res = await firstValueFrom(
-        this.api.post<{ new_category: string; aggregate: number }>('/comparison/override_category', { path: this.data.path, category }),
+        this.api.post<{ new_category: string; aggregate: number; vcg_submission_score: number | null }>('/comparison/override_category', { path: this.data.path, category }),
       );
       this.snackBar.open(this.i18n.t(I18N.photo.category_override.success, { category: res.new_category }), '', { duration: 3000 });
-      this.dialogRef.close({ category: res.new_category, aggregate: res.aggregate });
+      this.dialogRef.close({ category: res.new_category, aggregate: res.aggregate, vcg_submission_score: res.vcg_submission_score } satisfies CategoryOverrideResult);
     } catch {
       this.snackBar.open(this.i18n.t(I18N.errors.action_failed), '', { duration: 3000 });
       this.saving.set(false);

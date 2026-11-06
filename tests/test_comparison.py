@@ -1025,6 +1025,42 @@ class TestBatchOverrideCategory:
         with get_test_db() as conn:
             assert conn.execute('SELECT COUNT(*) FROM photo_scoring_overrides').fetchone()[0] == 0
 
+    @pytest.mark.parametrize('operation', ['override_category', 'override_categories', 'clear_category_override'])
+    @pytest.mark.parametrize('suitability', [9.0, None])
+    def test_category_changes_refresh_submission_score(self, library, operation, suitability):
+        """分类变化同步申请分；缺少图库适配分时回退到总分，其他照片保持原样。"""
+        from analyzers.vcg_suitability import VCG_SCORE_VERSION, calculate_vcg_submission_score
+        from db.scoring_overrides import set_photo_scoring_override
+
+        _, client, get_test_db = library
+        with get_test_db() as conn, conn:
+            conn.execute(
+                'UPDATE photos SET vcg_suitability_score = ?, vcg_submission_score = 1.23, '
+                "vcg_score_version = 'old', vcg_scored_at = 'old'",
+                (suitability,),
+            )
+            set_photo_scoring_override(conn, '/a.jpg', category_override='wildlife', source='manual')
+            before = dict(conn.execute("SELECT * FROM photos WHERE path = '/untouched.jpg'").fetchone())
+        body = {'paths': ['/a.jpg', '/b.jpg']} if operation == 'override_categories' else {'path': '/a.jpg'}
+        if operation != 'clear_category_override':
+            body['category'] = 'wildlife'
+        resp = client.post(f'/api/comparison/{operation}', json=body)
+        assert resp.status_code == 200, resp.text
+        paths = body.get('paths', ['/a.jpg'])
+        with get_test_db() as conn:
+            for path in paths:
+                row = dict(conn.execute('SELECT * FROM photos WHERE path = ?', (path,)).fetchone())
+                expected = calculate_vcg_submission_score(row['aggregate'], suitability)
+                assert row['vcg_submission_score'] == expected
+                assert row['vcg_submission_score'] != 1.23
+                assert row['vcg_suitability_score'] == suitability
+                assert row['vcg_score_version'] == VCG_SCORE_VERSION
+                assert row['vcg_scored_at'] != 'old'
+                if operation != 'override_categories':
+                    assert resp.json()['vcg_submission_score'] == expected
+            after = dict(conn.execute("SELECT * FROM photos WHERE path = '/untouched.jpg'").fetchone())
+            assert after == before
+
     def test_category_counts_refresh_immediately_after_save(self, library, monkeypatch):
         import sqlite3
         from api import types as photo_types

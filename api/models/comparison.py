@@ -127,6 +127,7 @@ class CategoryOverrideResponse(BaseModel):
     old_category: Optional[str] = None
     new_category: Optional[str] = None
     aggregate: Optional[float] = None
+    vcg_submission_score: Optional[float] = None
 
 
 class BatchCategoryOverrideResponse(BaseModel):

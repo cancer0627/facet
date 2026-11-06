@@ -1210,13 +1210,28 @@ def _recompute_category_and_aggregate(row, *, category_override=None, scoring_co
     return category, round(new_score, 2)
 
 
+def _update_category_scores(conn, row, category, aggregate, *, vis_sql='1=1', vis_params=()):
+    """在同一次写入中更新分类、总分和视觉中国申请分，保留原图库适配分。"""
+    from analyzers.vcg_suitability import (
+        VCG_SCORE_VERSION, calculate_vcg_submission_score, vcg_scored_at,
+    )
+
+    submission = calculate_vcg_submission_score(aggregate, dict(row).get('vcg_suitability_score'))
+    conn.execute(
+        f'UPDATE photos SET category = ?, aggregate = ?, vcg_submission_score = ?, '
+        f'vcg_score_version = ?, vcg_scored_at = ? WHERE path = ? AND {vis_sql}',
+        [category, aggregate, submission, VCG_SCORE_VERSION, vcg_scored_at(), row['path'], *vis_params],
+    )
+    return submission
+
+
 @router.post("/api/comparison/override_categories", response_model=BatchCategoryOverrideResponse, response_model_exclude_unset=True)
 @retry_on_locked()
 def api_comparison_override_categories(
     body: BatchOverrideCategoryBody,
     user: CurrentUser = Depends(require_edition),
 ):
-    """批量保存人工分类并同步总分；任一照片不可见或写入失败时整体回滚。"""
+    """批量保存人工分类，同步总分和申请分；任一照片不可见或写入失败时整体回滚。"""
     from db.scoring_overrides import set_photo_scoring_override
     from processing.scorer import Facet
 
@@ -1245,10 +1260,7 @@ def api_comparison_override_categories(
                 conn, row['path'], category_override=body.category,
                 source='manual', created_by=user_id,
             )
-            conn.execute(
-                'UPDATE photos SET category = ?, aggregate = ? WHERE path = ?',
-                (category, aggregate, row['path']),
-            )
+            _update_category_scores(conn, row, category, aggregate)
 
     with _photo_types_lock:
         _photo_types_cache['data'].clear()
@@ -1271,6 +1283,7 @@ def api_comparison_override_category(
     lightbox never shows the new category next to the old score.
     """
     from db.scoring_overrides import set_photo_scoring_override
+    from processing.scorer import Facet
 
     if not body.path or not body.category:
         raise HTTPException(status_code=400, detail='Missing path or category')
@@ -1283,6 +1296,7 @@ def api_comparison_override_category(
     # Verify photo exists and user has visibility
     user_id = user.user_id if user else None
     vis_sql, vis_params = get_visibility_clause(user_id)
+    scorer = Facet(db_path=DEFAULT_DB_PATH, config_path=str(_CONFIG_PATH), lightweight=True)
 
     with get_db() as conn:
         row = conn.execute(f"SELECT * FROM photos WHERE path = ? AND {vis_sql}", [body.path] + vis_params).fetchone()
@@ -1298,11 +1312,10 @@ def api_comparison_override_category(
             created_by=user_id,
         )
 
-        new_category, aggregate = _recompute_category_and_aggregate(row, category_override=body.category)
+        new_category, aggregate = _recompute_category_and_aggregate(row, category_override=body.category, scorer=scorer)
 
-        conn.execute(
-            f"UPDATE photos SET category = ?, aggregate = ? WHERE path = ? AND {vis_sql}",
-            [new_category, aggregate, body.path] + vis_params,
+        submission = _update_category_scores(
+            conn, row, new_category, aggregate, vis_sql=vis_sql, vis_params=vis_params,
         )
         conn.commit()
 
@@ -1314,6 +1327,7 @@ def api_comparison_override_category(
         'old_category': old_category,
         'new_category': new_category,
         'aggregate': aggregate,
+        'vcg_submission_score': submission,
     }
 
 
@@ -1332,12 +1346,14 @@ def api_comparison_clear_category_override(
     ``category_override``.
     """
     from db.scoring_overrides import clear_photo_scoring_override, get_photo_scoring_overrides
+    from processing.scorer import Facet
 
     if not body.path:
         raise HTTPException(status_code=400, detail='Missing path')
 
     user_id = user.user_id if user else None
     vis_sql, vis_params = get_visibility_clause(user_id)
+    scorer = Facet(db_path=DEFAULT_DB_PATH, config_path=str(_CONFIG_PATH), lightweight=True)
 
     with get_db() as conn:
         row = conn.execute(f"SELECT * FROM photos WHERE path = ? AND {vis_sql}", [body.path] + vis_params).fetchone()
@@ -1350,11 +1366,10 @@ def api_comparison_clear_category_override(
         remaining = get_photo_scoring_overrides(conn, paths=[body.path])
         scoring_context = remaining.get(body.path, {}).get('scoring_context')
 
-        new_category, aggregate = _recompute_category_and_aggregate(row, scoring_context=scoring_context)
+        new_category, aggregate = _recompute_category_and_aggregate(row, scoring_context=scoring_context, scorer=scorer)
 
-        conn.execute(
-            f"UPDATE photos SET category = ?, aggregate = ? WHERE path = ? AND {vis_sql}",
-            [new_category, aggregate, body.path] + vis_params,
+        submission = _update_category_scores(
+            conn, row, new_category, aggregate, vis_sql=vis_sql, vis_params=vis_params,
         )
         conn.commit()
 
@@ -1366,6 +1381,7 @@ def api_comparison_clear_category_override(
         'old_category': old_category,
         'new_category': new_category,
         'aggregate': aggregate,
+        'vcg_submission_score': submission,
     }
 
 

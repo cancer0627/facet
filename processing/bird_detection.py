@@ -13,6 +13,7 @@ from models.bird_detector import (
     BirdDetector, DEFAULT_MIN_AREA_PERCENT, MODEL_ID, SCORE_VERSION, guard_frame_edges, score_detections,
 )
 from models.bird_focus import needs_focus_verification, verify_focus
+from models.bird_landmarks import BirdLandmarkDetector, BirdLandmarkLoadError
 
 logger = logging.getLogger(__name__)
 TERMINAL = {'completed', 'cancelled', 'failed'}
@@ -39,17 +40,22 @@ def result_version(tiled, min_area_percent=DEFAULT_MIN_AREA_PERCENT):
 
 
 def reusable_details(row, signature, tiled):
-    """复用同一原图、同一检测模式的第三版起定位与局部估计；新轮廓规则另行读取原图核验。"""
+    """复用同一原图和检测模式的定位；头眼规则升级时另读原图测量。"""
     if row['bird_source_signature'] != signature or row['bird_status'] not in ('scored', 'no_bird', 'unjudgeable'):
         return None
     version = row['bird_version'] or ''
     if not (version == f'{MODEL_ID}:bird-interior-edge-width-v3:tiled={int(tiled)}'
             or version.startswith(f'{MODEL_ID}:bird-interior-edge-width-v4:tiled={int(tiled)}:')
+            or version.startswith(f'{MODEL_ID}:bird-interior-edge-width-v5:tiled={int(tiled)}:')
+            or version.startswith(f'{MODEL_ID}:bird-interior-edge-width-v6:tiled={int(tiled)}:')
+            or version.startswith(f'{MODEL_ID}:bird-head-eye-edge-width-v7:tiled={int(tiled)}:')
+            or version.startswith(f'{MODEL_ID}:bird-head-eye-edge-width-v8:tiled={int(tiled)}:')
             or version.startswith(f'{MODEL_ID}:{SCORE_VERSION}:tiled={int(tiled)}:')):
         return None
     try:
         details = json.loads(row['bird_detection_json'] or '{}')
-        if (isinstance(details, dict) and details.get('score_basis') == 'bird_interior' and details.get('width', 0) > 0
+        if (isinstance(details, dict) and details.get('score_basis') in ('bird_interior', 'bird_head_eye')
+                and details.get('width', 0) > 0
                 and details.get('height', 0) > 0 and isinstance(details.get('birds'), list)):
             return details
     except (ValueError, TypeError):
@@ -85,7 +91,7 @@ def save_result(db_path, path, result, signature, version, error=None):
         return cursor.rowcount == 1
 
 
-def run_job(db_path, job_id, detector_factory=BirdDetector, loader=None, resolver=None):
+def run_job(db_path, job_id, detector_factory=BirdDetector, loader=None, resolver=None, *, resume=False):
     """模型只在出现待处理原图时加载，统计仅在照片结果提交后递增。"""
     if loader is None:
         from utils.image_loading import load_image_from_path
@@ -96,22 +102,30 @@ def run_job(db_path, job_id, detector_factory=BirdDetector, loader=None, resolve
         from api.path_validation import resolve_photo_disk_path
         resolver = resolve_photo_disk_path
     job = get_job(db_path, job_id)
-    if not job or job['status'] in TERMINAL:
+    if not job or (resume and job['status'] != 'cancelled') or (not resume and job['status'] in TERMINAL):
         return
     paths = json.loads(job['paths_json'])
     options = json.loads(job['options_json'])
     min_area_percent = options.get('min_area_percent', DEFAULT_MIN_AREA_PERCENT)
     version = result_version(options['tiled'], min_area_percent)
-    completed = succeeded = failed = skipped = 0
+    completed, succeeded, failed, skipped = (
+        (job['completed'], job['succeeded'], job['failed'], job['skipped']) if resume else (0, 0, 0, 0)
+    )
+    if not 0 <= completed <= len(paths) or completed != succeeded + failed + skipped:
+        raise ValueError('Invalid saved bird detection progress')
     detector = None
+    if resume:
+        update_job(db_path, job_id, cancel_requested=0)
     update_job(db_path, job_id, status='running', phase='preparing', pid=os.getpid())
 
     def cancelled():
         current = get_job(db_path, job_id)
         return not current or bool(current['cancel_requested'])
 
+    focus_detector = BirdLandmarkDetector(cancelled=cancelled)
+
     try:
-        for path in paths:
+        for path in paths[completed:]:
             if cancelled():
                 update_job(db_path, job_id, status='cancelled', phase='cancelled')
                 return
@@ -132,14 +146,18 @@ def run_job(db_path, job_id, detector_factory=BirdDetector, loader=None, resolve
                         and details is not None and not needs_focus_verification(details, min_area_percent)):
                     skipped += 1
                 elif not options['recompute'] and details is not None:
+                    details = guard_frame_edges(details, min_area_percent)
+                    image = None
                     if needs_focus_verification(details, min_area_percent):
                         update_job(db_path, job_id, phase='verifying_focus')
                         image = loader(disk_path)
                         if image is None:
                             raise ValueError('Original image could not be decoded')
-                        try:
-                            details = verify_focus(image, details, min_area_percent)
-                        finally:
+                    try:
+                        # 即使目标全被大小门槛排除，也不能把旧鸟体估计发布为头眼分数。
+                        details = verify_focus(image, details, min_area_percent, detector=focus_detector)
+                    finally:
+                        if image is not None:
                             image.close()
                     update_job(db_path, job_id, phase='selecting_birds')
                     result = guard_frame_edges(details, min_area_percent)
@@ -167,7 +185,9 @@ def run_job(db_path, job_id, detector_factory=BirdDetector, loader=None, resolve
                     try:
                         result = score_detections(image, detector.detect(image), min_area_percent)
                         update_job(db_path, job_id, phase='verifying_focus')
-                        result = guard_frame_edges(verify_focus(image, result, min_area_percent), min_area_percent)
+                        result = guard_frame_edges(
+                            verify_focus(image, result, min_area_percent, detector=focus_detector), min_area_percent,
+                        )
                     finally:
                         image.close()
                     if source_signature(disk_path) != signature:
@@ -177,6 +197,11 @@ def run_job(db_path, job_id, detector_factory=BirdDetector, loader=None, resolve
                     succeeded += 1
             except InterruptedError:
                 update_job(db_path, job_id, status='cancelled', phase='cancelled')
+                return
+            except BirdLandmarkLoadError:
+                logger.exception('Bird landmark model could not be loaded')
+                update_job(db_path, job_id, status='failed', phase='failed',
+                           error='头眼模型加载失败，请检查网络和模型运行环境后重试。')
                 return
             except Exception:
                 logger.exception('Bird detection failed for one photo')
@@ -198,6 +223,7 @@ def main():
     parser.add_argument('--db', required=True)
     parser.add_argument('--config', required=True)
     parser.add_argument('--job-id', required=True)
+    parser.add_argument('--resume', action='store_true', help='Continue a cancelled job after its saved progress')
     args = parser.parse_args()
     # 必须在导入服务器配置和互斥锁前指定同一个照片库及配置。
     os.environ['DB_PATH'] = args.db
@@ -205,7 +231,7 @@ def main():
     from facet import LibraryLock
     try:
         with LibraryLock(args.db, kind='bird detection'):
-            run_job(args.db, args.job_id)
+            run_job(args.db, args.job_id, resume=args.resume)
     except Exception:
         logger.exception('Bird detection worker failed')
         update_job(args.db, args.job_id, status='failed', phase='failed',

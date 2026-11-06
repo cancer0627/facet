@@ -4,6 +4,8 @@ import os
 import sqlite3
 import time
 from contextlib import contextmanager
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -134,3 +136,83 @@ def test_requires_edition_permission(task_db):
 
 def test_empty_when_no_jobs(task_db, edition_client):
     assert edition_client.get('/api/tasks').json() == {'tasks': []}
+
+
+def test_terminates_only_owned_bird_job_and_keeps_progress(task_db, edition_client):
+    add_bird(task_db, 'owned')
+    add_bird(task_db, 'other', owner='other-user')
+    response = edition_client.post('/api/tasks/owned/terminate', json={'confirm': True})
+    assert response.status_code == 200, response.text
+    assert response.json()['status'] == 'stopping'
+    assert response.json()['current'] == 3 and response.json()['can_terminate'] is False
+    with task_db() as conn:
+        assert conn.execute("SELECT cancel_requested FROM bird_detection_jobs WHERE id='owned'").fetchone()[0] == 1
+        assert conn.execute("SELECT cancel_requested FROM bird_detection_jobs WHERE id='other'").fetchone()[0] == 0
+    assert edition_client.post('/api/tasks/other/terminate', json={'confirm': True}).status_code == 404
+
+
+def test_termination_requires_confirmation_and_edition_access(task_db, edition_client, regular_client):
+    add_bird(task_db, 'active')
+    assert edition_client.post('/api/tasks/active/terminate', json={'confirm': False}).status_code == 400
+    assert edition_client.post('/api/tasks/active/terminate').status_code == 422
+    assert regular_client.post('/api/tasks/active/terminate', json={'confirm': True}).status_code == 403
+
+
+def test_finishing_bird_task_does_not_get_restarted_or_lose_results(task_db, edition_client):
+    add_bird(task_db, 'done', status='completed')
+    response = edition_client.post('/api/tasks/done/terminate', json={'confirm': True})
+    assert response.status_code == 200
+    assert response.json()['status'] == 'completed' and response.json()['current'] == 3
+    assert response.json()['can_terminate'] is False
+
+
+def managed_library_process(kind='recompute'):
+    process = SimpleNamespace(pid=123, poll=Mock(return_value=None), terminate=Mock())
+    scan._scan_state.update(running=True, kind=kind, process=process, started_at=100,
+                            user_id='test', termination_requested=False,
+                            progress={'current': 4, 'total': 20})
+    return process
+
+
+@pytest.mark.parametrize('kind', ['scan', 'recompute', 'panoramas'])
+def test_managed_library_task_terminates_once_and_reports_stopped_state(task_db, edition_client, kind):
+    process = managed_library_process(kind)
+    task = edition_client.get('/api/tasks').json()['tasks'][0]
+    assert task['can_terminate'] is True
+    for _ in range(2):
+        response = edition_client.post(f"/api/tasks/{task['id']}/terminate", json={'confirm': True})
+        assert response.status_code == 200, response.text
+        assert response.json()['status'] == 'stopping' and response.json()['current'] == 4
+    process.terminate.assert_called_once()
+    scan._scan_state.update(running=False, exit_code=-15)
+    task = edition_client.get('/api/tasks').json()['tasks'][0]
+    assert task['status'] == 'cancelled' and task['can_terminate'] is False
+
+
+def test_stale_or_external_task_id_never_signals_a_process(task_db, edition_client):
+    process = managed_library_process()
+    for task_id in ('library:123:99', 'library:987:100', 'scan:1'):
+        assert edition_client.post(f'/api/tasks/{task_id}/terminate', json={'confirm': True}).status_code == 409
+    process.terminate.assert_not_called()
+
+
+def test_other_user_cannot_terminate_library_task_in_multi_user_install(task_db, edition_client, monkeypatch):
+    process = managed_library_process()
+    scan._scan_state['user_id'] = 'other-user'
+    monkeypatch.setattr(tasks, 'is_multi_user_enabled', lambda: True)
+    task = edition_client.get('/api/tasks').json()['tasks'][0]
+    assert task['can_terminate'] is False
+    assert edition_client.post(f"/api/tasks/{task['id']}/terminate", json={'confirm': True}).status_code == 403
+    process.terminate.assert_not_called()
+
+
+def test_process_exit_or_signal_failure_does_not_leave_task_stopping(task_db, edition_client):
+    process = managed_library_process()
+    process.poll.return_value = 0
+    url = '/api/tasks/library:123:100/terminate'
+    assert edition_client.post(url, json={'confirm': True}).status_code == 409
+    process.terminate.assert_not_called()
+    process.poll.return_value = None
+    process.terminate.side_effect = PermissionError('cannot signal')
+    assert edition_client.post(url, json={'confirm': True}).status_code == 409
+    assert scan._scan_state['termination_requested'] is False

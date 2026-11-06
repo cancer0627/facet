@@ -52,6 +52,8 @@ _scan_state = {
     'directories': [],
     'exit_code': None,
     'progress': None,
+    'termination_requested': False,
+    'user_id': None,
 }
 
 
@@ -194,6 +196,8 @@ def start_scan(
         _scan_state['directories'] = directories
         _scan_state['exit_code'] = None
         _scan_state['progress'] = None
+        _scan_state['termination_requested'] = False
+        _scan_state['user_id'] = user.user_id
 
         reader = threading.Thread(target=_read_scan_output, args=(proc,), daemon=True)
         reader.start()
@@ -375,10 +379,10 @@ def start_recompute(
     """
     return _spawn_fixed_library_job(
         body, '--recompute-average', JOB_KIND_RECOMPUTE,
-        'Recompute spawned; poll /api/scan/recompute_status to see it run')
+        'Recompute spawned; poll /api/scan/recompute_status to see it run', user=user)
 
 
-def _spawn_fixed_library_job(body, flag, kind, message):
+def _spawn_fixed_library_job(body, flag, kind, message, *, user):
     """Spawn a library-rewriting facet.py job whose argv is fixed server-side.
 
     Shared by every endpoint of this shape so the locking, the cross-process
@@ -417,6 +421,8 @@ def _spawn_fixed_library_job(body, flag, kind, message):
         _scan_state['directories'] = []
         _scan_state['exit_code'] = None
         _scan_state['progress'] = None
+        _scan_state['termination_requested'] = False
+        _scan_state['user_id'] = user.user_id
 
         reader = threading.Thread(target=_read_scan_output, args=(proc,), daemon=True)
         reader.start()
@@ -453,7 +459,7 @@ def start_detect_panoramas(
     """
     return _spawn_fixed_library_job(
         body, '--detect-panoramas', JOB_KIND_PANORAMAS,
-        'Panorama detection spawned; poll /api/scan/recompute_status to see it run')
+        'Panorama detection spawned; poll /api/scan/recompute_status to see it run', user=user)
 
 
 

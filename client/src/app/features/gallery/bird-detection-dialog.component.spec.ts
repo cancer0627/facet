@@ -48,12 +48,12 @@ describe('BirdDetectionDialogComponent', () => {
     expect(component.active()).toBe(true);
   });
 
-  it('submits the selected minimum size and allows explicitly including small birds', async () => {
+  it.each([0, 7])('submits the selected minimum size of %s percent', async (minimum) => {
     build();
-    component.setMinArea({ target: { value: '0' } });
+    component.setMinArea({ target: { value: String(minimum) } });
     await component.start();
     expect(post).toHaveBeenCalledWith('/birds/jobs', {
-      paths: ['/a.jpg', '/b.jpg'], tiled: true, recompute: false, min_area_percent: 0,
+      paths: ['/a.jpg', '/b.jpg'], tiled: true, recompute: false, min_area_percent: minimum,
     });
   });
 

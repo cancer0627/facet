@@ -14,9 +14,15 @@ interface BirdResult {
   min_area_percent?: number | null;
   excluded_small_count?: number | null;
   focus_unverified_count?: number | null;
+  assessment?: 'pass' | 'fail' | 'review' | null;
+  assessment_reason?: string | null;
+  assessment_index?: number | null;
+  focus_score?: number | null;
+  focus_score_index?: number | null;
   error: string | null;
   birds: { sharpness: number | null; confidence: number; width: number; height: number;
-    reason?: string | null; area_percent?: number; exclusion_reason?: string | null; focus_verified?: boolean }[];
+    reason?: string | null; area_percent?: number; exclusion_reason?: string | null; focus_verified?: boolean;
+    assessment?: 'pass' | 'fail' | 'review'; assessment_reason?: string; focus_score?: number | null }[];
 }
 
 @Component({
@@ -28,7 +34,15 @@ interface BirdResult {
       @if (r.status) {
         <section class="border-t border-[var(--mat-sys-outline-variant)] pt-3 space-y-2">
           <h3 class="font-medium">{{ 'birds.title' | translate }}</h3>
-          <p>{{ ('birds.photo_status.' + r.status) | translate }}</p>
+          @if (!r.stale && !r.outdated && r.focus_score !== null && r.focus_score !== undefined) {
+            <p class="font-medium">{{ 'birds.focus_score' | translate }}: {{ r.focus_score | fixed:1 }}</p>
+          } @else {
+            <p class="font-medium">{{ 'birds.assessment.review' | translate }}</p>
+          }
+          @if ((r.focus_score === null || r.focus_score === undefined || r.stale || r.outdated) && r.assessment_reason) {
+            <p class="text-sm">{{ ('birds.assessment_reason.' + r.assessment_reason) | translate }}</p>
+          }
+          <p class="text-xs opacity-70">{{ 'birds.focus_score_hint' | translate }}</p>
           @if (r.outdated) { <p>{{ 'birds.outdated' | translate }}</p> }
           @if (!r.outdated && r.focus_unverified_count) {
             <p class="text-sm">{{ 'birds.focus_unverified_count' | translate:{ count: r.focus_unverified_count } }}</p>
@@ -42,10 +56,6 @@ interface BirdResult {
           @if (r.stale) {
             <p>{{ 'birds.stale' | translate }}</p>
           } @else {
-            @if (r.score !== null && r.score !== undefined) {
-              <p>{{ 'birds.score' | translate }}: {{ r.score | fixed:2 }} / 10</p>
-              <p class="text-xs opacity-70">{{ 'birds.score_hint' | translate }}</p>
-            }
             @if (r.count) {
               <p>{{ 'birds.detected_count' | translate:{ count: r.count } }}</p>
               <button mat-button (click)="showPreview.set(!showPreview())">{{ 'birds.show_location' | translate }}</button>
@@ -59,9 +69,9 @@ interface BirdResult {
                     @for (bird of r.birds; track $index) {
                       <option [value]="$index" [selected]="$index === selectedBird()">
                         {{ 'birds.bird_number' | translate:{ number: $index + 1 } }}
-                        @if (!r.outdated && bird.focus_verified === false) {
-                          · {{ 'birds.focus_review' | translate }}
-                        } @else if (!r.outdated && bird.sharpness !== null) { · {{ bird.sharpness | fixed:2 }} }
+                        @if (!r.stale && !r.outdated && bird.focus_score !== null && bird.focus_score !== undefined) {
+                          · {{ bird.focus_score | fixed:1 }}
+                        } @else { · {{ 'birds.assessment.review' | translate }} }
                       </option>
                     }
                   </select>
@@ -74,8 +84,12 @@ interface BirdResult {
                     @if (bird.exclusion_reason) {
                       <p class="text-sm">{{ ('birds.reason.' + bird.exclusion_reason) | translate }}</p>
                     }
+                    @if ((bird.focus_score === null || bird.focus_score === undefined) && bird.assessment_reason) {
+                      <p class="text-sm">{{ ('birds.assessment_reason.' + bird.assessment_reason) | translate }}</p>
+                    }
                   }
-                  @if (r.birds[selectedBird()!]?.reason; as reason) {
+                  @if (!r.birds[selectedBird()!]?.assessment_reason && r.birds[selectedBird()!]?.reason && r.birds[selectedBird()!]?.reason !== r.birds[selectedBird()!]?.exclusion_reason) {
+                    @let reason = r.birds[selectedBird()!]!.reason;
                     <p class="text-sm">{{ ('birds.reason.' + reason) | translate }}</p>
                   }
                   <img class="w-full rounded" [src]="preview(selectedBird()!)" [alt]="'birds.crop_alt' | translate" />
@@ -105,7 +119,7 @@ export class BirdResultsComponent {
       const subscription = this.api.get<BirdResult>('/birds/photo', { path }).subscribe({
         next: result => {
           this.result.set(result);
-          this.selectedBird.set(result.best_index ?? (result.birds.length ? 0 : null));
+          this.selectedBird.set(result.focus_score_index ?? result.assessment_index ?? result.best_index ?? (result.birds.length ? 0 : null));
         },
         error: () => this.result.set(null),
       });

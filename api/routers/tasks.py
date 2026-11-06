@@ -1,9 +1,9 @@
 """汇总照片库作业和当前用户的鸟类检测任务，不返回文件路径或后台日志。"""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from api.auth import CurrentUser, require_edition
+from api.auth import CurrentUser, is_multi_user_enabled, require_edition
 from api.database import get_db
 from db.connection import DEFAULT_DB_PATH
 from processing.bird_detection import TERMINAL
@@ -23,13 +23,31 @@ class BackgroundTask(BaseModel):
     skipped: int | None = None
     succeeded: int | None = None
     error: str | None = None
+    can_terminate: bool = False
 
 
 class BackgroundTasksResponse(BaseModel):
     tasks: list[BackgroundTask]
 
 
-def _library_tasks(bird_pids=()):
+class TaskTerminateBody(BaseModel):
+    confirm: bool
+
+
+def _library_task_id(state):
+    return f"library:{getattr(state.get('process'), 'pid', None)}:{state.get('started_at')}"
+
+
+def _can_control_library(state, user):
+    """只控制本服务实际启动的进程；多用户安装还须核对发起人。"""
+    process = state.get('process')
+    return bool(user and callable(getattr(process, 'terminate', None)) and (
+        not is_multi_user_enabled() or user.is_superadmin
+        or ('user_id' in state and state['user_id'] == user.user_id)
+    ))
+
+
+def _library_tasks(bird_pids=(), user=None):
     from facet import library_job_holder
     from api.routers.scan import _scan_lock, _scan_state, _configured_scan_stale_seconds
 
@@ -43,10 +61,12 @@ def _library_tasks(bird_pids=()):
     if state.get('kind') and state.get('started_at'):
         running = state['running']
         tasks.append(BackgroundTask(
-            id=f"library:{local_pid}:{state['started_at']}", kind=state['kind'],
-            status='running' if running else ('completed' if state['exit_code'] == 0 else 'failed'),
+            id=_library_task_id(state), kind=state['kind'],
+            status=('stopping' if running else 'cancelled') if state.get('termination_requested') else
+                   ('running' if running else ('completed' if state['exit_code'] == 0 else 'failed')),
             started_at=state['started_at'], phase=progress.get('phase'),
             current=progress.get('current'), total=progress.get('total'),
+            can_terminate=running and not state.get('termination_requested', False) and _can_control_library(state, user),
         ))
     bird_holder = holder and holder.get('kind') == 'bird detection' and holder.get('pid') in bird_pids
     if holder and not bird_holder and not (state['running'] and local_pid == holder.get('pid')):
@@ -67,7 +87,7 @@ def _library_tasks(bird_pids=()):
             "ORDER BY id DESC LIMIT 1", (f'-{int(_configured_scan_stale_seconds())} seconds',),
         ).fetchone()
     if row:
-        scan = next((task for task in tasks if task.kind == 'scan' and task.status == 'running'), None)
+        scan = next((task for task in tasks if task.kind == 'scan' and task.status in ('running', 'stopping')), None)
         if scan is None:
             scan = BackgroundTask(id=f"scan:{row['id']}", kind='scan', status='running',
                                   started_at=row['started_at'])
@@ -95,7 +115,7 @@ def background_tasks(user: CurrentUser = Depends(require_edition)):
             f'SELECT {columns} FROM bird_detection_jobs WHERE {owner} '
             "AND status IN ('completed','cancelled','failed') ORDER BY created_at DESC LIMIT 50", params,
         ).fetchall()
-    tasks = _library_tasks({row['pid'] for row in rows if row['status'] not in TERMINAL})
+    tasks = _library_tasks({row['pid'] for row in rows if row['status'] not in TERMINAL}, user)
     for row in rows:
         job = dict(row)
         if job['status'] not in TERMINAL:
@@ -107,7 +127,42 @@ def background_tasks(user: CurrentUser = Depends(require_edition)):
             phase=job['phase'], current=job['completed'], total=job['total'],
             started_at=job['created_at'], succeeded=job['succeeded'], failed=job['failed'],
             skipped=job['skipped'], error=job['error'],
+            can_terminate=job['status'] not in TERMINAL and not job['cancel_requested'],
         ))
     active = {'queued', 'running', 'stopping'}
     tasks.sort(key=lambda task: (task.status not in active, -(task.started_at or 0), task.id))
     return BackgroundTasksResponse(tasks=tasks)
+
+
+@router.post('/{task_id}/terminate', response_model=BackgroundTask)
+def terminate_task(task_id: str, body: TaskTerminateBody, user: CurrentUser = Depends(require_edition)):
+    """终止已核对身份的任务，保留已提交结果；不接受客户端提供的进程编号。"""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail='Termination must be confirmed')
+    if task_id.startswith(('library:', 'scan:')):
+        from api.routers.scan import _scan_lock, _scan_state
+
+        with _scan_lock:
+            if task_id != _library_task_id(_scan_state):
+                raise HTTPException(status_code=409, detail='This task cannot be controlled by this service')
+            if not _can_control_library(_scan_state, user):
+                raise HTTPException(status_code=403, detail='Task control is not permitted')
+            process = _scan_state['process']
+            if _scan_state['running'] and not _scan_state.get('termination_requested'):
+                if process.poll() is not None:
+                    raise HTTPException(status_code=409, detail='Task has already stopped; refresh the list')
+                _scan_state['termination_requested'] = True
+                try:
+                    process.terminate()
+                except OSError:
+                    _scan_state['termination_requested'] = False
+                    raise HTTPException(status_code=409, detail='Task could not be terminated; refresh the list')
+    else:
+        from api.routers.birds import BirdCancelBody, cancel_bird_job
+
+        cancel_bird_job(task_id, BirdCancelBody(confirm=True), user)
+    # 使用统一列表中的状态，避免操作返回值与刷新后的状态出现分歧。
+    task = next((task for task in background_tasks(user).tasks if task.id == task_id), None)
+    if task is None:
+        raise HTTPException(status_code=404, detail='Task not found')
+    return task

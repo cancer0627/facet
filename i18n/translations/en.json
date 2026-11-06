@@ -2554,9 +2554,9 @@
     "details": "View bird detection result",
     "actions": "Detection and scoring",
     "title": "Bird sharpness detection",
-    "description": "Separate individual birds in {count} selected photos and assess their internal detail. First use downloads about 190 MB of models. Photos stay local; processing is slower than the older version.",
-    "score_hint": "Experimental reference score comparing internal detail with the original bird outline. Insufficient or conflicting evidence requires review and is excluded from photo scoring. Head and eye focus are not separately assessed, and scores are not human-calibrated.",
-    "score": "Best bird sharpness",
+    "description": "Separate birds in {count} selected photos, locate eyes and beaks, then measure head and eye sharpness. First use downloads about 290 MB of models. Photos stay local.",
+    "score_hint": "Experimental head and eye sharpness reference: the lower eye-region or head score determines the result. Sharp wings or background cannot compensate for a blurred eye region. Unstable localization, missing reliable eye locations or insufficient detail require review and receive no score. No human-calibrated pass threshold is available; inspect the crop.",
+    "score": "Best eligible bird head and eye sharpness",
     "tiled": "Improve small-bird detection",
     "tiled_hint": "Also inspect overlapping image tiles. This takes longer and may still miss small or overlapping birds.",
     "recompute": "Re-detect existing results",
@@ -2576,8 +2576,8 @@
     "detected_count": "Located {count} bird candidates",
     "show_location": "Show bird locations and best crop",
     "location_alt": "Detected bird locations",
-    "box_hint": "Green marks the highest reference score, orange other candidates. Thin outlines show segmented bird regions. Inspect each bird individually.",
-    "crop_alt": "Selected bird crop and segmentation outline",
+    "box_hint": "Green marks the highest head and eye reference score; orange marks other candidates. Thin outlines show bird segmentation. In the crop, pink circles show eye measurement regions and blue circles show head regions.",
+    "crop_alt": "Selected bird crop, segmentation and head and eye measurement regions",
     "stale": "The original image changed or is unavailable. Run detection again before using this result.",
     "result_scope": "Showing photos from this detection",
     "leave_results": "Leave these results",
@@ -2591,7 +2591,7 @@
       "cancelled": "Detection stopped; completed results are saved",
       "failed": "Detection failed",
       "selecting_birds": "Selecting from existing bird detections",
-      "verifying_focus": "Checking bird outline and local focus evidence"
+      "verifying_focus": "Locating head and eyes and measuring original-image sharpness"
     },
     "photo_status": {
       "scored": "Scored",
@@ -2608,9 +2608,12 @@
       "too_small": "Too small to score.",
       "insufficient_detail": "Not enough reliable internal detail to judge sharpness.",
       "low_mask_resolution": "Segmentation is too coarse to judge sharpness reliably.",
-      "frame_edge": "At the original frame edge; the bird may be incomplete and is not scored.",
-      "below_min_area": "This bird is below the size threshold and does not contribute to the photo score. Its local sharpness is shown for reference.",
-      "focus_unverified": "Local detail and the bird outline do not corroborate each other; sharp background may be included. Review this candidate; it does not contribute to the photo score."
+      "frame_edge": "Near the original frame edge; the bird may be incomplete and does not contribute to the photo score. Any local detail estimate is retained for review.",
+      "below_min_area": "Below the size threshold and excluded from the photo score. The crop remains available. Lowering the threshold measures newly eligible heads and eyes.",
+      "focus_unverified": "Head and eye localization or local detail cannot support a reliable measurement. Review this candidate; it does not contribute to the photo score.",
+      "head_unlocalized": "Eye and beak confidence, agreement across views or position requirements were not met. Head and eye regions could not be reliably located; not scored.",
+      "eye_detail_insufficient": "Head and eyes were located, but usable detail, size or original-image coverage is insufficient for a reliable score.",
+      "eye_unverified": "The predicted eye location was not confirmed by original-image eye structure and local localization. Review required; not scored."
     },
     "min_area": "Minimum bird size for photo scoring",
     "min_area_hint": "Measured as the bounding box area relative to the full photo. Smaller birds remain available to inspect but do not determine the photo score. Changing only this threshold reuses existing detections.",
@@ -2618,19 +2621,46 @@
     "area_small": "Small (at least 0.25%)",
     "area_medium": "Medium (at least 1%, default)",
     "area_large": "Large (at least 3%)",
+    "area_xlarge": "Extra large (at least 7%)",
     "size_rule": "Size threshold: bounding box covers at least {percent}% of the photo",
     "small_excluded": "{count} small candidates are excluded from the photo score and remain available to inspect.",
     "size_metric": "Bounding box: {width} × {height} pixels, {percent}% of the photo",
     "focus_review": "Needs review",
-    "focus_unverified_count": "{count} candidates lack consistent focus evidence and require review. They do not contribute to the photo score."
+    "focus_unverified_count": "{count} candidates lack reliable head and eye measurements and require review. They do not contribute to the photo score.",
+    "assessment": {
+      "pass": "Pass",
+      "fail": "Fail",
+      "review": "Review"
+    },
+    "assessment_hint": "Pass requires a fully framed bird with no obvious head or eye blur. Blur or failed framing checks means fail; uncertain evidence requires review. Inspect the crop.",
+    "assessment_reason": {
+      "complete_and_clear": "The detected bird is fully framed, with no obvious blur in the head or visible eyes.",
+      "body_clipped": "The detected bird reaches the image boundary and does not pass the full-framing requirement.",
+      "body_uncertain": "Full framing is uncertain. Check wing tips, tail and occlusion.",
+      "head_eye_blurred": "A verified head or eye region is clearly blurred.",
+      "head_eye_uncertain": "The actual head or eye location, or usable detail, is uncertain. Inspect the crop.",
+      "focus_borderline": "Head and eye detail is borderline and needs review.",
+      "stale": "The original changed or is unavailable. Run detection again.",
+      "outdated": "The detection uses older rules. Run detection again.",
+      "unavailable": "Valid detection evidence is missing. Run detection first.",
+      "below_min_area": "This bird is below the size threshold and does not determine this photo’s result.",
+      "no_eligible_bird": "No eligible bird candidate is available. Check the original or size threshold."
+    },
+    "focus_score": "Head and eye sharpness",
+    "focus_score_hint": "Scores use verified head and eye measurements; higher means sharper. Uncertain location, detail or full framing leaves the score blank for review. This is not detection confidence or a percentage of sharpness."
   },
   "tasks": {
     "title": "Background tasks",
-    "description": "Click Refresh to update. Shows library jobs, your active bird detection tasks and the latest 50 finished bird detection tasks.",
+    "description": "Refresh manually to update progress. Supported tasks show a Terminate button. Termination stops remaining work and keeps saved results. Lists library jobs, all your active bird detection tasks, and the 50 most recent finished bird tasks.",
     "empty": "No background tasks.",
     "load_error": "Could not refresh tasks. Click Refresh to try again.",
     "active_count": "{count} active task(s)",
     "refresh": "Refresh",
+    "terminate": "Terminate",
+    "terminating": "Requesting termination…",
+    "terminate_error": "Could not request termination. Please retry.",
+    "action_unavailable": "The task state or your permissions changed. Refresh the list and retry.",
+    "control_unavailable": "This task is not managed by this service, or you do not have permission to terminate it.",
     "progress": "{current} / {total} processed",
     "progress_unknown": "Running; progress is not available yet.",
     "kind": {
@@ -2646,9 +2676,9 @@
     "status": {
       "queued": "Queued",
       "running": "Running",
-      "stopping": "Stopping",
+      "stopping": "Terminating",
       "completed": "Completed",
-      "cancelled": "Cancelled",
+      "cancelled": "Terminated",
       "failed": "Failed",
       "interrupted": "Interrupted"
     }

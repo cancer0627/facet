@@ -4,6 +4,8 @@ import math
 
 import numpy as np
 
+from models.bird_detector import FRAME_EDGE_MARGIN, INSTANCE_MAX_SIZE
+
 
 def instance_windows(size, proposals, enhanced=True):
     """整图检查，加上有界、去重的局部上下文；避免重复放大同一片鸟群。"""
@@ -104,7 +106,7 @@ class BirdInstanceSegmenter:
         if self.cancelled():
             raise InterruptedError('Bird detection cancelled')
         tile = image.crop(window).convert('RGB')
-        tile.thumbnail((768, 768))
+        tile.thumbnail((INSTANCE_MAX_SIZE, INSTANCE_MAX_SIZE))
         with torch.inference_mode():
             output = self.model([to_tensor(tile)])[0]
         sx, sy = (window[2] - window[0]) / tile.width, (window[3] - window[1]) / tile.height
@@ -122,6 +124,7 @@ class BirdInstanceSegmenter:
             birds.append({
                 'box': [window[0] + x0 * sx, window[1] + y0 * sy, window[0] + x1 * sx, window[1] + y1 * sy],
                 'confidence': float(output['scores'][index]), '_mask': mask,
+                'frame_margin': [FRAME_EDGE_MARGIN * sx, FRAME_EDGE_MARGIN * sy],
                 'truncated': ((window[0] > 0 and x0 <= 3) or (window[1] > 0 and y0 <= 3)
                               or (window[2] < image.width and x1 >= tile.width - 3)
                               or (window[3] < image.height and y1 >= tile.height - 3)),

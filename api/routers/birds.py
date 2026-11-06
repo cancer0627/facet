@@ -83,6 +83,13 @@ class BirdPhotoResult(BaseModel):
     eligible_count: int | None = None
     excluded_small_count: int | None = None
     focus_unverified_count: int | None = None
+    assessment: str | None = None
+    assessment_reason: str | None = None
+    assessment_index: int | None = None
+    assessment_version: str | None = None
+    assessment_counts: dict[str, int] | None = None
+    focus_score: float | None = None
+    focus_score_index: int | None = None
 
 
 def _visible_photo(path, user):
@@ -180,6 +187,7 @@ def cancel_bird_job(job_id: str, body: BirdCancelBody, user: CurrentUser = Depen
 
 @router.get('/photo', response_model=BirdPhotoResult)
 def bird_photo(path: str = Query(...), user: CurrentUser = Depends(require_authenticated)):
+    from models.bird_assessment import assess_result
     from models.bird_detector import RESULT_VERSION_PREFIX
     row = _visible_photo(path, user)
     result = json.loads(row.get('bird_detection_json') or '{}')
@@ -194,7 +202,9 @@ def bird_photo(path: str = Query(...), user: CurrentUser = Depends(require_authe
             result['stale'] = source_signature(resolve_photo_disk_path(path)) != row.get('bird_source_signature')
         except (OSError, HTTPException):
             result['stale'] = True
-    return result
+    current = bool((row.get('bird_version') or '').startswith(RESULT_VERSION_PREFIX)
+                   and row.get('bird_source_signature') and not result.get('stale'))
+    return assess_result(result, current=current)
 
 
 @router.get('/preview')
@@ -231,6 +241,15 @@ def bird_preview(path: str = Query(...), index: int | None = Query(None, ge=0),
                            (y * original_height - rect[1]) * image.height / (rect[3] - rect[1])) for x, y in outline]
                 if len(points) > 2:
                     draw.line(points + [points[0]], fill='#16a34a', width=2)
+            # 与评分记录共用原图坐标；仅展示本次实际测量过的头眼区域。
+            sx, sy = image.width / (rect[2] - rect[0]), image.height / (rect[3] - rect[1])
+            for region in birds[index].get('focus_evidence', {}).get('eyes', []):
+                cx = (region['centre'][0] * original_width - rect[0]) * sx
+                cy = (region['centre'][1] * original_height - rect[1]) * sy
+                for key, color in (('head_radius', '#2563eb'), ('eye_radius', '#db2777')):
+                    radius = region[key]
+                    draw.ellipse((cx - radius * sx, cy - radius * sy, cx + radius * sx, cy + radius * sy),
+                                 outline=color, width=2)
         else:
             image.thumbnail((1280, 1280))
             draw = ImageDraw.Draw(image)
