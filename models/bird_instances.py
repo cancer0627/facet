@@ -79,9 +79,10 @@ def merge_instances(candidates):
 
 
 class BirdInstanceSegmenter:
-    def __init__(self, model_dir, cancelled=lambda: False):
+    def __init__(self, model_dir, cancelled=lambda: False, *, species='bird'):
         self.model_dir = model_dir
         self.cancelled = cancelled
+        self.species = species
         self.model = None
 
     def load(self):
@@ -97,7 +98,7 @@ class BirdInstanceSegmenter:
         )
         self.model.load_state_dict(state)
         self.model.eval()
-        self.bird_label = weights.meta['categories'].index('bird')
+        self.bird_label = weights.meta['categories'].index(self.species)
 
     def _detect_window(self, image, window):
         import torch

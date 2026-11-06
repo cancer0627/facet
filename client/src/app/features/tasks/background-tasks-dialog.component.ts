@@ -54,15 +54,15 @@ type TasksResponse = components['schemas']['BackgroundTasksResponse'];
               <p class="text-sm opacity-80 mb-2">{{ phase }}</p>
             }
             @if (active(task) || task.total) {
-              <mat-progress-bar [mode]="task.total && task.current != null ? 'determinate' : 'indeterminate'"
+              <mat-progress-bar [mode]="task.total && task.current !== null && task.current !== undefined ? 'determinate' : 'indeterminate'"
                                 [value]="percent(task)" />
             }
-            @if (task.total != null && task.current != null) {
+            @if (task.total !== null && task.total !== undefined && task.current !== null && task.current !== undefined) {
               <p class="text-sm mt-2">{{ 'tasks.progress' | translate:{ current: task.current!, total: task.total! } }}</p>
             } @else if (active(task)) {
               <p class="text-sm opacity-70 mt-2">{{ 'tasks.progress_unknown' | translate }}</p>
             }
-            @if (task.succeeded != null) {
+            @if (task.succeeded !== null && task.succeeded !== undefined) {
               <p class="text-sm opacity-70 mt-2">{{ 'birds.counts' | translate:{ succeeded: task.succeeded!, skipped: task.skipped ?? 0, failed: task.failed ?? 0 } }}</p>
             }
             @if (task.error) {
@@ -122,7 +122,7 @@ export class BackgroundTasksDialogComponent {
 
   protected phaseLabel(task: BackgroundTask): string {
     if (!task.phase) return '';
-    const key = (task.kind === 'birds' ? 'birds.phase.' : 'scan.phase.') + task.phase;
+    const key = (task.kind === 'elephants' ? 'elephants.phase.' : task.kind === 'birds' ? 'birds.phase.' : 'scan.phase.') + task.phase;
     const label = this.i18n.t(key);
     return label === key ? '' : label;
   }

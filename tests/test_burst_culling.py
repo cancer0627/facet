@@ -449,7 +449,7 @@ class TestCullingGroupsEndpoint:
         mock_conn = mock.MagicMock()
         scene_groups = [{
             "group_id": 0, "type": "scene", "reason": "beach",
-            "photos": [{"path": "/s1.jpg"}], "best_path": "/s1.jpg", "count": 1,
+            "photos": [{"path": "/s1.jpg"}, {"path": "/s2.jpg"}], "best_path": "/s1.jpg", "count": 2,
             "category": None, "start": "2026:01:01 10:00:00", "end": "2026:01:01 10:05:00",
             "moment": "beach", "moment_confidence": 0.8,
         }]
@@ -468,8 +468,9 @@ class TestCullingGroupsEndpoint:
     def test_group_by_burst_skips_similar_feed(self, client):
         mock_conn = mock.MagicMock()
         burst_groups = [{
-            "group_id": 1, "type": "burst", "reason": "burst", "photos": [],
-            "best_path": None, "count": 0, "category": None,
+            "group_id": 1, "type": "burst", "reason": "burst",
+            "photos": [{"path": "/b1.jpg"}, {"path": "/b2.jpg"}],
+            "best_path": "/b1.jpg", "count": 2, "category": None,
         }]
         with (
             mock.patch("api.routers.burst_culling.get_db", lambda: _cm(mock_conn)),
@@ -484,7 +485,7 @@ class TestCullingGroupsEndpoint:
         similar_count.assert_not_called()
 
     def test_confirm_group_scene_delegates_to_scene_cull(self, client):
-        with mock.patch(
+        with mock.patch("api.unified_culling.is_unified", return_value=False), mock.patch(
             "api.routers.burst_culling.apply_scene_cull", new_callable=mock.AsyncMock,
         ) as scene_cull:
             scene_cull.return_value = {"status": "ok", "kept": 1, "rejected": 1}
@@ -847,8 +848,8 @@ class TestConfirmSimilarWithSequenceMember:
         conn = _real_schema_db(tmp_path)
         for index in range(2):
             conn.execute(
-                "INSERT INTO photos (path, filename, sequence_group_id, sequence_kind, "
-                "category) VALUES (?, ?, 1, 'panorama', 'default')",
+                "INSERT INTO photos (path, filename, group_id, group_type, sequence_kind, "
+                "category) VALUES (?, ?, 1, 'panorama', 'panorama', 'default')",
                 (f'/s{index}.jpg', f's{index}.jpg'))
         conn.execute(
             "INSERT INTO photos (path, filename, sequence_kind, category) "
@@ -872,7 +873,7 @@ class TestConfirmSimilarWithSequenceMember:
 
     @staticmethod
     def _confirm(client, conn, body):
-        with mock.patch("api.routers.burst_culling.get_db", lambda: _cm(conn)):
+        with mock.patch("api.unified_culling.is_unified",return_value=False), mock.patch("api.routers.burst_culling.get_db", lambda: _cm(conn)):
             return client.post("/api/culling-groups/confirm", json={
                 "group_id": 1, "type": "similar", **body,
             })
@@ -927,8 +928,8 @@ class TestConfirmSceneWithSequenceMember:
         conn = _real_schema_db(tmp_path)
         for index in range(2):
             conn.execute(
-                "INSERT INTO photos (path, filename, sequence_group_id, sequence_kind, "
-                "category) VALUES (?, ?, 1, 'bracket', 'default')",
+                "INSERT INTO photos (path, filename, group_id, group_type, sequence_kind, "
+                "category) VALUES (?, ?, 1, 'bracket', 'bracket', 'default')",
                 (f'/k{index}.jpg', f'k{index}.jpg'))
         conn.execute(
             "INSERT INTO photos (path, filename, sequence_kind, category) "
@@ -953,6 +954,7 @@ class TestConfirmSceneWithSequenceMember:
     @staticmethod
     def _confirm(client, conn, body):
         with (
+            mock.patch("api.unified_culling.is_unified", return_value=False),
             mock.patch("api.routers.burst_culling.get_db", lambda: _cm(conn)),
             mock.patch("api.routers.scenes.get_db", lambda: _cm(conn)),
         ):
@@ -1037,8 +1039,8 @@ class TestKeepWholeKindVisibilityLeak:
     def _db(tmp_path):
         conn = _real_schema_db(tmp_path)
         conn.execute(
-            "INSERT INTO photos (path, filename, sequence_group_id, sequence_kind) "
-            "VALUES ('/foreign_panorama.jpg', 'foreign_panorama.jpg', 1, 'panorama')"
+            "INSERT INTO photos (path, filename, group_id, group_type, sequence_kind) "
+            "VALUES ('/foreign_panorama.jpg', 'foreign_panorama.jpg', 1, 'panorama', 'panorama')"
         )
         conn.execute(
             "INSERT INTO photos (path, filename, sequence_kind) "
@@ -1065,6 +1067,7 @@ class TestKeepWholeKindVisibilityLeak:
         # the reviewer's multi-user probe (foreign panorama -> 200, foreign
         # plain / nonexistent -> 404, before this fix).
         with (
+            mock.patch("api.unified_culling.is_unified", return_value=False),
             mock.patch("api.routers.burst_culling.get_db", lambda: _cm(conn)),
             mock.patch("api.routers.burst_culling.get_visibility_clause",
                        return_value=("photos.path NOT LIKE '/foreign%'", [])),
@@ -1418,7 +1421,8 @@ class TestPanoramaGroupsCarryTheOverride:
 class TestCullingFailureDetails:
     @pytest.mark.parametrize('group_type', ['burst', 'similar', 'scene', 'panorama'])
     def test_database_lock_has_public_reason_and_log(self, edition_client, group_type, caplog):
-        with mock.patch('api.routers.burst_culling._keep_whole_kind_for', return_value=None), \
+        with mock.patch('api.unified_culling.is_unified',return_value=False), \
+             mock.patch('api.routers.burst_culling._keep_whole_kind_for', return_value=None), \
              mock.patch('api.routers.burst_culling.get_db', side_effect=sqlite3.OperationalError('database is locked')), \
              mock.patch('api.routers.scenes.get_db', side_effect=sqlite3.OperationalError('database is locked')):
             response = edition_client.post('/api/culling-groups/confirm', json={
@@ -1445,7 +1449,8 @@ class TestCullingFailureDetails:
 
     def test_group_validation_failure_is_logged(self, edition_client, caplog):
         from fastapi import HTTPException
-        with mock.patch('api.routers.burst_culling._keep_whole_kind_for', return_value=None), \
+        with mock.patch('api.unified_culling.is_unified',return_value=False), \
+             mock.patch('api.routers.burst_culling._keep_whole_kind_for', return_value=None), \
              mock.patch('api.routers.burst_culling.select_burst_photos', side_effect=HTTPException(404, 'Burst group not found')):
             response = edition_client.post('/api/culling-groups/confirm', json={
                 'group_id': 1, 'type': 'burst', 'paths': ['/photo.jpg'], 'keep_paths': ['/photo.jpg'],

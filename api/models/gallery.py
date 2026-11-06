@@ -110,11 +110,22 @@ class Photo(BaseModel):
     bird_assessment: Optional[str] = None
     bird_assessment_reason: Optional[str] = None
     bird_focus_score: Optional[float] = None
+    elephant_sharpness: Optional[float] = None
+    elephant_count: CoercedInt = None
+    elephant_status: Optional[str] = None
+    elephant_version: Optional[str] = None
+    elephant_score_outdated: CoercedInt = None
+    elephant_assessment: Optional[str] = None
+    elephant_assessment_reason: Optional[str] = None
+    elephant_focus_score: Optional[float] = None
     star_rating: CoercedInt = None
     is_favorite: CoercedInt = None
     is_rejected: CoercedInt = None
     duplicate_group_id: CoercedInt = None
     is_duplicate_lead: CoercedInt = None
+    group_id: CoercedInt = None
+    group_type: Optional[str] = None
+    group_source: Optional[str] = None
     burst_group_id: CoercedInt = None
     caption: Optional[str] = None
     caption_translated: Optional[str] = None
@@ -352,6 +363,10 @@ class GalleryParams(BaseModel):
     max_moment_confidence: str = ''
     # Path
     path_prefix: str = ''
+    elephant_job: str = ''
+    elephant_status: str = ''
+    min_elephant_sharpness: str = ''
+    max_elephant_sharpness: str = ''
     bird_job: str = ''
     bird_status: str = ''
     # Set scope (photo-detail "open this set in the gallery"). Ephemeral: never

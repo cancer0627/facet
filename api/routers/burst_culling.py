@@ -29,6 +29,7 @@ from api.db_helpers import (
     album_filter_clause, time_window_clauses,
     select_in_chunks, scope_cache_key, NO_VISIBILITY_SQL,
     SEQUENCE_OVERRIDE_SELECT, SEQUENCE_OVERRIDE_PENDING_SELECT,
+    require_active_culling_photos,
 )
 from api.similarity_groups import compute_similarity_groups
 from api.routers.scenes import compute_scenes, apply_scene_cull, SceneConfirmBody
@@ -95,6 +96,7 @@ class BurstSelectionBody(BaseModel):
     burst_id: int
     keep_paths: list[str]
     seed: int = 0
+    paths: Optional[list[str]] = Field(default=None, max_length=1000)
 
 
 class SimilarSelectionBody(BaseModel):
@@ -104,7 +106,7 @@ class SimilarSelectionBody(BaseModel):
 
 class CullingConfirmBody(BaseModel):
     group_id: int
-    type: Literal['burst', 'similar', 'scene', 'bracket', 'panorama', 'hdr_panorama', 'manual']
+    type: Literal['burst', 'similar', 'scene', 'bracket', 'panorama', 'hdr_panorama', 'manual_similar', 'manual']
     # Non-empty for every feed type: `select_burst_photos` and
     # `select_similar_photos` operate on the whole named group, so an empty
     # `paths` here would leave an empty `keep_paths` rejecting everything in
@@ -119,6 +121,12 @@ class CullingFacesBody(BaseModel):
     profile: Optional[str] = None
 
 
+class CullingDismissBody(BaseModel):
+    group_id: int
+    type: Literal['manual_similar', 'manual']
+    paths: list[str] = Field(min_length=1, max_length=500)
+
+
 class CullingSubjectsBody(BaseModel):
     paths: list[str] = Field(max_length=1000)
 
@@ -128,7 +136,7 @@ class KeeperHintsBody(BaseModel):
 
 
 class AutoCullBody(BaseModel):
-    group_by: Literal['all', 'burst', 'similar', 'scene'] = 'all'
+    group_by: Literal['all','burst','similar','scene','bracket','panorama','hdr_panorama'] = 'all'
     album_id: Optional[int] = None
     date_from: Optional[str] = None
     date_to: Optional[str] = None
@@ -681,6 +689,7 @@ async def select_burst_photos(
                 )
 
             # Batch update burst lead status and mark as reviewed
+            require_active_culling_photos(conn, body.paths if body.paths is not None else keep_set, user_id)
             keep_paths = list(keep_set)
             reject_paths = list(group_paths - keep_set)
             _mark_burst_reviewed(conn, keep_paths, reject_paths)
@@ -790,6 +799,7 @@ async def select_similar_photos(
             ))
 
             # Mark non-kept photos as rejected (per-user in multi-user mode, visibility-checked)
+            require_active_culling_photos(conn, group_paths, user_id)
             reject_paths = list(group_paths - keep_set)
             set_photos_rejected(conn, reject_paths, user_id)
 
@@ -1101,7 +1111,7 @@ def _fetch_unreviewed_similar_groups(conn, threshold, vis_sql, vis_params, seed,
             best_path = photo_list[0]['path']
 
         results.append({
-            'group_id': offset + group_idx,
+            'group_id': group.get('group_id', offset + group_idx),
             'type': 'similar',
             'reason': reason,
             'photos': photo_list,
@@ -1117,7 +1127,7 @@ def _fetch_unreviewed_similar_groups(conn, threshold, vis_sql, vis_params, seed,
 
 _CULLING_SORTS = ('easiest', 'redundant', 'best', 'recent', 'needs_comparisons', 'chronological')
 _CULLING_GROUP_BY = ('all', 'burst', 'similar', 'scene', 'bracket',
-                     'panorama', 'hdr_panorama', 'manual')
+                     'panorama', 'hdr_panorama', 'manual_similar', 'manual')
 
 # Natural direction of each sort mode. Every mode ranks largest-first except
 # `chronological`, which walks the shoot forward in time -- the order a
@@ -1464,9 +1474,22 @@ async def api_culling_groups(
                 from api.routers.albums import _check_album_access
                 _check_album_access(conn, album_id, user_id)
 
+            from api.unified_culling import is_unified, fetch_groups
+            if is_unified(conn):
+                all_groups = fetch_groups(conn,user,group_by,exclude_rejected,album_id,date_from,date_to)
+                cat_needs, default_need = _category_comparison_needs(conn) if sort == 'needs_comparisons' else ({},0)
+                all_groups.sort(key=lambda g: _culling_sort_key(g,sort,cat_needs,default_need), reverse=_culling_sort_reverse(sort,direction))
+                if sort == 'chronological':
+                    _order_group_photos_by_capture(all_groups)
+                total_pages, offset = paginate(len(all_groups),page,per_page)
+                selected = all_groups[offset:offset+per_page]
+                attach_keeper_probs(conn,selected,user_id)
+                return {'groups':selected,'total_groups':len(all_groups),'page':page,
+                        'per_page':per_page,'total_pages':total_pages}
+
             if group_by == 'manual':
                 from api.routers.manual_culling import fetch_manual_groups
-                all_groups = fetch_manual_groups(conn, user, album_id, date_from, date_to)
+                all_groups = fetch_manual_groups(conn, user, album_id, date_from, date_to, exclude_rejected)
             elif group_by == 'scene':
                 # Scenes carry their own stats_cache; bypass the burst/similar memo
                 # and stay chronological (sort is ignored for this mode).
@@ -1478,8 +1501,10 @@ async def api_culling_groups(
                 # Enriching + globally sorting the whole unreviewed set is identical
                 # across pages, so memo it and let pagination reuse one enrichment
                 # instead of re-materializing + re-scoring every group per page.
+                # 其他页面的淘汰操作也应立即改变待选列表，不能继续使用旧成员缓存。
+                rejected_key = frozenset(_get_rejected_paths(conn, user_id)) if exclude_rejected else None
                 cache_key = (round(similarity_threshold, 3), seed, sort, direction, exclude_rejected,
-                             user_id, album_id, date_from, date_to, group_by)
+                             user_id, album_id, date_from, date_to, group_by, rejected_key)
                 cached = _culling_groups_cache.get(cache_key)
                 now = time.time()
                 if cached is not None and now - cached[0] < _CULLING_GROUPS_CACHE_TTL:
@@ -1560,7 +1585,7 @@ async def api_culling_groups(
             if group_by == 'all':
                 from api.routers.manual_culling import fetch_manual_groups
                 all_groups = list(all_groups) + fetch_manual_groups(
-                    conn, user, album_id, date_from, date_to)
+                    conn, user, album_id, date_from, date_to, exclude_rejected)
             if group_by in ('all', 'manual'):
                 cat_needs, default_need = ({}, 0)
                 if sort == 'needs_comparisons':
@@ -1569,6 +1594,7 @@ async def api_culling_groups(
                     g, sort, cat_needs, default_need), reverse=_culling_sort_reverse(sort, direction))
                 if sort == 'chronological':
                     _order_group_photos_by_capture(all_groups)
+            all_groups = [g for g in all_groups if len(g['photos']) >= 2]
             total_groups = len(all_groups)
             total_pages, offset = paginate(total_groups, page, per_page)
             page_groups = all_groups[offset:offset + per_page]
@@ -1724,6 +1750,7 @@ def _confirm_sequence_group(body, user, kind):
             ).fetchall()
         }
         reject_paths = [p for p in in_set if p not in keep]
+        require_active_culling_photos(conn, in_set, user_id)
         keep_paths = [p for p in in_set if p in keep]
         if body.type == 'burst':
             _mark_burst_reviewed(conn, keep_paths, reject_paths)
@@ -1738,6 +1765,49 @@ def _confirm_sequence_group(body, user, kind):
         'rejected': len(reject_paths),
         'skipped': len(paths) - len(in_set),
     }
+
+
+class GroupTypeBody(BaseModel):
+    group_id: int
+    type: Literal['manual_similar','hdr_panorama','panorama','bracket','burst','similar']
+    paths: list[str] = Field(min_length=2,max_length=10000)
+
+
+@router.post('/api/culling-groups/type')
+def change_culling_group_type(body: GroupTypeBody, user: CurrentUser = Depends(require_edition)):
+    from api.unified_culling import change_group_type
+    with get_db() as conn:
+        result = change_group_type(conn,body,user)
+    _invalidate_culling_groups_cache()
+    return result
+
+
+@router.post('/api/culling-groups/dismiss')
+def dismiss_culling_group(body: CullingDismissBody, user: CurrentUser = Depends(require_edition)):
+    """只清空手动组的成员关联，保留照片其他属性。"""
+    from api.routers.manual_culling import _members
+    user_id = user.user_id if user else None
+    paths = set(body.paths)
+    with get_db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        from api.unified_culling import is_unified, checked_members
+        if is_unified(conn):
+            rows = checked_members(conn,body.group_id,user_id)
+            if rows[0]['group_type'] != 'manual_similar':
+                raise HTTPException(404,'Manual similar group not found')
+        elif body.group_id >= 0:
+            raise HTTPException(404, 'Manual group not found')
+        members = {r['path'] for r in _members(conn, body.group_id, user_id)}
+        if not members:
+            raise HTTPException(404, 'Manual group not found or inaccessible')
+        if members != paths:
+            raise HTTPException(409, 'Group membership changed; refresh the group')
+        conn.execute("UPDATE photos SET group_id=NULL,group_type=NULL,group_source=NULL WHERE group_id=?",
+                     (body.group_id,))
+        conn.execute("DELETE FROM stats_cache WHERE key LIKE 'similarity_groups_%' OR key LIKE 'scenes_%'")
+        conn.commit()
+    _invalidate_culling_groups_cache()
+    return {'status': 'ok', 'count': len(paths)}
 
 
 @router.post("/api/culling-groups/confirm")
@@ -1766,7 +1836,16 @@ async def confirm_culling_group(
 
 
 async def _dispatch_culling_confirm(body, user):
-    if body.type == 'manual':
+    from api.unified_culling import is_unified, confirm_group
+    with get_db() as conn:
+        if is_unified(conn):
+            result, pairs = confirm_group(conn,body,user)
+            _invalidate_culling_groups_cache()
+            from db import DEFAULT_DB_PATH
+            trigger_auto_retrain(DEFAULT_DB_PATH,user.user_id if user else None,pairs,conn=conn)
+            return result
+
+    if body.type in ('manual', 'manual_similar'):
         from api.routers.manual_culling import confirm_manual_group
         return await asyncio.to_thread(confirm_manual_group, body, user)
     user_id = user.user_id if user else None
@@ -1781,6 +1860,7 @@ async def _dispatch_culling_confirm(body, user):
         burst_body = BurstSelectionBody(
             burst_id=body.group_id,
             keep_paths=body.keep_paths,
+            paths=body.paths,
         )
         return await select_burst_photos(burst_body, user)
     elif body.type == 'similar':
@@ -1978,6 +2058,12 @@ def _collect_auto_cull_groups(conn, user_id, group_by, album_id, date_from, date
     ``exclude_rejected=True`` so already-rejected photos (per-user) never enter
     the split, and every photo is bounded by the caller's visibility clause.
     """
+    from api.unified_culling import is_unified, fetch_groups
+    if is_unified(conn):
+        groups = fetch_groups(conn, None if user_id is None else type('GroupUser',(),{'user_id':user_id})(),
+                              group_by,True,album_id,date_from,date_to)
+        return [g for g in groups if g['type'] != 'manual_similar']
+
     vis_sql, vis_params = get_visibility_clause(user_id)
     if group_by == 'scene':
         groups = _fetch_scene_groups(
@@ -2034,6 +2120,7 @@ def _apply_auto_cull_group(conn, group, keep_paths, reject_paths, user_id, vis_s
     """
     gtype = group['type']
     keep_whole = group.get('sequence_kind') in _KEEP_WHOLE_KINDS
+    conn.executemany('UPDATE photos SET burst_reviewed=1,similarity_reviewed=1 WHERE path=?', [(p,) for p in keep_paths+reject_paths])
     if gtype == 'burst':
         _mark_burst_reviewed(conn, keep_paths, reject_paths)
     elif gtype == 'similar':
@@ -2372,7 +2459,8 @@ def auto_cull(
             groups = _collect_auto_cull_groups(
                 conn, user_id, body.group_by, body.album_id, body.date_from, body.date_to,
             )
-            if body.trim_brackets:
+            from api.unified_culling import is_unified
+            if body.trim_brackets and not is_unified(conn):
                 groups += _fetch_bracket_groups(
                     conn, user_id, vis_sql, vis_params,
                     album_id=body.album_id, date_from=body.date_from, date_to=body.date_to,
@@ -2393,7 +2481,7 @@ def auto_cull(
                 photos = [p for p in group['photos'] if p['path'] not in decided]
                 if len(photos) < 2:
                     continue
-                if group['type'] == 'bracket':
+                if group['type'] == 'bracket' and body.trim_brackets:
                     keep, reject = _bracket_keep_split(photos)
                 elif group.get('sequence_kind') in _KEEP_WHOLE_KINDS:
                     # Reached through the `all`/`burst` feed, where a sweep is
@@ -2424,6 +2512,7 @@ def auto_cull(
                         'best_path': keep_paths[0],
                     })
                 if not body.dry_run:
+                    require_active_culling_photos(conn, keep_paths + reject_paths, user_id)
                     total_pairs += _apply_auto_cull_group(
                         conn, group, keep_paths, reject_paths, user_id, vis_sql, vis_params,
                     )

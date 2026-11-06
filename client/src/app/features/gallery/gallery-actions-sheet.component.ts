@@ -18,6 +18,7 @@ export type SheetAction =
   | { kind: 'rate'; rating: number }
   | { kind: 'category' }
   | { kind: 'bird-detection' }
+  | { kind: 'elephant-detection' }
   | { kind: 'mark-panorama'; sequenceKind: 'panorama' | 'hdr_panorama' }
   | { kind: 'album'; albumId: number }
   | { kind: 'create-album' }
@@ -55,6 +56,10 @@ export interface GalleryActionsSheetData {
         <button class="flex items-center gap-3 w-full px-4 py-3 text-sm text-left hover:bg-white/10 cursor-pointer" (click)="pick({ kind: 'bird-detection' })">
           <mat-icon aria-hidden="true">center_focus_strong</mat-icon>
           {{ 'birds.title' | translate }}
+        </button>
+        <button class="flex items-center gap-3 w-full px-4 py-3 text-sm text-left hover:bg-white/10 cursor-pointer" (click)="pick({ kind: 'elephant-detection' })">
+          <mat-icon aria-hidden="true">center_focus_strong</mat-icon>
+          {{ 'elephants.title' | translate }}
         </button>
         <button class="flex items-center gap-3 w-full px-4 py-3 text-sm text-left hover:bg-white/10 cursor-pointer" (click)="pick({ kind: 'category' })">
           <mat-icon aria-hidden="true">category</mat-icon>

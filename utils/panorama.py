@@ -310,7 +310,7 @@ def _load_candidates(conn, settings):
     """
     rows = conn.execute(
         "SELECT path, date_taken, camera_model, focal_length, f_stop, shutter_speed, iso, "
-        "scanned_at FROM photos WHERE date_taken IS NOT NULL AND focal_length IS NOT NULL"
+        "scanned_at FROM photos WHERE date_taken IS NOT NULL AND focal_length IS NOT NULL AND COALESCE(group_source,'auto') != 'manual'"
     ).fetchall()
     photos = []
     for row in rows:
@@ -601,7 +601,8 @@ def _analyse_runs(db_path, runs, sift, matcher, settings):
     return found
 
 
-def detect_panoramas(db_path, config_path=None, incremental=False, label_snapshot=None):
+def detect_panoramas(db_path, config_path=None, incremental=False, label_snapshot=None,
+                     force=False):
     """Label panorama sets across the library.
 
     Whole-library by nature: a set is defined by its chronological neighbours, so
@@ -623,19 +624,22 @@ def detect_panoramas(db_path, config_path=None, incremental=False, label_snapsho
             first. Callers that reach this directly (the CLI's explicit re-run,
             the API's `/detect_panoramas` job) pass `incremental=False`, which
             never consults it.
+        force: 手动重新检测时执行一次，即使配置关闭了自动全景检测。
     """
     from config import ScoringConfig
 
     settings = dict(DEFAULTS)
     settings.update(
         ScoringConfig(config_path, validate=False).get_panorama_detection_settings())
-    if not settings.get('enabled', True):
+    if not force and not settings.get('enabled', True):
         logger.info("Panorama detection disabled in config.")
         return None
 
     try:
         sift, matcher = _sift_and_matcher(settings)
     except ImportError:
+        if force:
+            raise
         logger.warning("OpenCV unavailable; skipping panorama detection.")
         return None
 
@@ -660,27 +664,10 @@ def detect_panoramas(db_path, config_path=None, incremental=False, label_snapsho
         suppressed, forced = load_overrides(conn)
         found = resolve_segments(found, suppressed, forced)
 
-        # `sequence_ev_offset` goes too. An HDR panorama's frames were labelled
-        # by the bracket pass first, which wrote an offset the panorama label
-        # then superseded; leaving it behind means the row carries an exposure
-        # offset for a set that has no base exposure, and the bracket pass's own
-        # kind-scoped clear will never reach it again.
-        conn.execute(
-            "UPDATE photos SET sequence_group_id = NULL, sequence_kind = NULL, "
-            "sequence_ev_offset = NULL, is_sequence_lead = 0 "
-            "WHERE sequence_kind IN (?, ?)", KINDS)
-        for group_id, segment in enumerate(found, start=1):
-            paths = segment['paths']
-            conn.executemany(
-                "UPDATE photos SET sequence_group_id = ?, sequence_kind = ?, "
-                "sequence_ev_offset = NULL, is_sequence_lead = 0 WHERE path = ?",
-                [(group_id, segment['kind'], path) for path in paths])
-            # The middle frame stands for the set: a sweep has no best frame, and
-            # the middle one is the likeliest to hold the subject. Marked here so
-            # the gallery's hide clause is an indexed equality rather than a
-            # window function run over every row of every query.
-            conn.execute("UPDATE photos SET is_sequence_lead = 1 WHERE path = ?",
-                         (paths[len(paths) // 2],))
+        from db.photo_groups import assign_auto_groups, rebuild_similar_groups
+        assign_auto_groups(conn,[{'kind':segment['kind'],'paths':segment['paths'],
+                                  'lead':segment['paths'][len(segment['paths'])//2]} for segment in found],KINDS)
+        rebuild_similar_groups(conn)
         # The labels now reflect every stored correction, so none of them is
         # waiting on a run any more. Stamped rather than deleted: the row is what
         # keeps the correction applied on later passes, and it is only its
@@ -691,6 +678,9 @@ def detect_panoramas(db_path, config_path=None, incremental=False, label_snapsho
         # dies part-way leaves the previous watermark and the next one re-measures.
         write_watermark(conn, settings, scanned_through)
         conn.commit()
+
+    from processing.scorer import process_bursts
+    process_bursts(db_path, config_path=config_path, only_unassigned=True)
 
     frames = sum(len(segment['paths']) for segment in found)
     plain = sum(1 for segment in found if segment['kind'] == PANORAMA)

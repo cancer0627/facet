@@ -23,6 +23,7 @@ from api.db_helpers import (
     culling_database_error_detail,
     album_filter_clause, time_window_clauses, scope_cache_key, paginate,
     HIDE_BURSTS_SQL,
+    require_active_culling_photos,
 )
 from api.models.albums import ScenesResponse
 from utils.date_utils import parse_date
@@ -386,6 +387,7 @@ async def apply_scene_cull(
                 from api.routers.burst_culling import _sequence_members
                 sequence_members = _sequence_members(rows)
 
+            require_active_culling_photos(conn, group_paths, user_id)
             reject_paths = list(group_paths - keep_set)
             set_photos_rejected(conn, reject_paths, user_id)
 

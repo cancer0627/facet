@@ -69,11 +69,23 @@ PHOTOS_COLUMNS = [
     ('bird_version', 'TEXT'),
     ('bird_detected_at', 'REAL'),
     ('bird_error', 'TEXT'),
+    ('elephant_sharpness', 'REAL'),
+    ('elephant_count', 'INTEGER'),
+    ('elephant_status', 'TEXT'),
+    ('elephant_bbox', 'TEXT'),
+    ('elephant_detection_json', 'TEXT'),
+    ('elephant_source_signature', 'TEXT'),
+    ('elephant_version', 'TEXT'),
+    ('elephant_detected_at', 'REAL'),
+    ('elephant_error', 'TEXT'),
 
     # Flags
     ('is_blink', 'INTEGER CHECK (is_blink IS NULL OR is_blink IN (0, 1))'),
     ('is_burst_lead', 'INTEGER DEFAULT 0 CHECK (is_burst_lead IN (0, 1))'),
-    ('burst_group_id', 'INTEGER'),
+    ('group_id', 'INTEGER'),
+    ('group_type', 'TEXT'),
+    ('group_source', 'TEXT'),
+    ('burst_group_id', "INTEGER GENERATED ALWAYS AS (CASE WHEN group_type IN ('burst','manual_similar') THEN group_id END) VIRTUAL"),
     ('burst_reviewed', 'INTEGER NOT NULL DEFAULT 0 CHECK (burst_reviewed IN (0, 1))'),
     ('similarity_reviewed', 'INTEGER NOT NULL DEFAULT 0 CHECK (similarity_reviewed IN (0, 1))'),
     ('is_monochrome', 'INTEGER DEFAULT 0 CHECK (is_monochrome IN (0, 1))'),
@@ -87,7 +99,7 @@ PHOTOS_COLUMNS = [
     # Deliberate multi-frame sequences (--detect-sequences). A bracket is one
     # subject shot at several exposures, so its frames must not be read as
     # competing takes the way a burst's are.
-    ('sequence_group_id', 'INTEGER'),
+    ('sequence_group_id', "INTEGER GENERATED ALWAYS AS (CASE WHEN group_type IN ('hdr_panorama','panorama','bracket') THEN group_id END) VIRTUAL"),
     ('sequence_kind', 'TEXT'),       # 'bracket' | 'panorama' | 'hdr_panorama'
     ('sequence_ev_offset', 'REAL'),  # exposure compensation vs the set's base frame (0.0 = base, + = brighter)
     # Which frame stands for a panorama set in the gallery. A bracket's
@@ -346,6 +358,8 @@ INDEXES = [
     # Composite index for camera/lens DISTINCT queries
     ('idx_camera_lens', 'photos', 'camera_model, lens_model'),
     # Duplicate detection indexes
+    ('idx_photo_group', 'photos', 'group_id'),
+    ('idx_photo_group_type', 'photos', 'group_type, group_id'),
     ('idx_burst_group', 'photos', 'burst_group_id'),
     ('idx_burst_reviewed', 'photos', 'burst_reviewed, burst_group_id'),
     ('idx_similarity_reviewed', 'photos', 'similarity_reviewed'),
@@ -788,7 +802,7 @@ def _migrate_add_missing_columns(conn, table_name, columns):
         table_name: Name of the table to migrate
         columns: List of (name, type_definition) tuples defining expected columns
     """
-    cursor = conn.execute(f"PRAGMA table_info({table_name})")
+    cursor = conn.execute(f"PRAGMA table_xinfo({table_name})")
     existing_cols = {row[1] for row in cursor.fetchall()}
 
     for col_name, col_type in columns:
@@ -830,6 +844,7 @@ BIRD_JOBS_COLUMNS = [
 # ALTERed. Order mirrors the CREATE TABLE order in init_database.
 _MIGRATED_TABLES = [
     ('bird_detection_jobs', BIRD_JOBS_COLUMNS),
+    ('elephant_detection_jobs', BIRD_JOBS_COLUMNS),
     ('photos', PHOTOS_COLUMNS),
     ('faces', FACES_COLUMNS),
     ('persons', PERSONS_COLUMNS),
@@ -915,12 +930,13 @@ def _migrate_comparisons_user_id(conn):
 # (_migrate_add_missing_columns) still bootstraps every DB to the current
 # column shape; this ladder exists ONLY for non-additive ops the sweep cannot
 # express — renames, type changes, data backfills, index/constraint drops.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Ordered ladder of non-additive migrations: (target_version, fn(conn)).
 # Each fn MUST be idempotent and SHOULD call db.maintenance.backup_database
 # before a destructive step. Empty today — the mechanism ships ahead of need.
-MIGRATIONS = []
+from db.photo_groups import migrate_photo_groups
+MIGRATIONS = [(2, migrate_photo_groups)]
 
 
 def _table_exists(conn, name):
@@ -976,6 +992,7 @@ def init_database(db_path='photo_scores_pro.db'):
         # Create photos table
         conn.execute(_build_create_table_sql('photos', PHOTOS_COLUMNS))
         conn.execute(_build_create_table_sql('bird_detection_jobs', BIRD_JOBS_COLUMNS))
+        conn.execute(_build_create_table_sql('elephant_detection_jobs', BIRD_JOBS_COLUMNS))
 
         # Create faces table with unique constraint
         conn.execute(_build_create_table_sql(
@@ -1101,6 +1118,8 @@ def init_database(db_path='photo_scores_pro.db'):
         # reads photos.clip_embedding, which the sweep backfills on old DBs.
         for table_name, columns in _MIGRATED_TABLES:
             _migrate_add_missing_columns(conn, table_name, columns)
+
+        migrate_photo_groups(conn)
 
         # Create photos_vec virtual table for vector search (requires sqlite-vec).
         # After the sweep so detect_embedding_dim can see clip_embedding.

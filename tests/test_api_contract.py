@@ -255,7 +255,7 @@ class TestFixtureIsRepresentative:
     def test_fixture_db_has_every_column_the_gallery_can_select(self):
         conn = sqlite3.connect(DB_PATH)
         try:
-            present = {row[1] for row in conn.execute("PRAGMA table_info(photos)")}
+            present = {row[1] for row in conn.execute("PRAGMA table_xinfo(photos)")}
         finally:
             conn.close()
         expected = set(PHOTO_BASE_COLS) | set(PHOTO_OPTIONAL_COLS)

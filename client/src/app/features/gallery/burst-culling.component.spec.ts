@@ -89,11 +89,84 @@ describe('BurstCullingComponent', () => {
     component.ngOnDestroy();
   });
 
+  describe('dissolve culling groups', () => {
+    beforeEach(async () => {
+      vi.useFakeTimers();
+      mockApi.get.mockReturnValue(of({ ...mockCullingGroupsResponse, groups: [
+        { ...mockCullingGroupsResponse.groups[0], group_id: -1, type: 'manual_similar' },
+        mockCullingGroupsResponse.groups[1],
+      ] }));
+      await (component as any).loadGroups();
+    });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it.each(['manual_similar'])(
+      'dissolves a %s group without sending keep or reject choices', async type => {
+        const group = { ...component['groups']()[0], type } as any;
+        component['dismissGroup'](group);
+        expect(mockApi.post).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(7000);
+        expect(mockApi.post).toHaveBeenCalledExactlyOnceWith('/culling-groups/dismiss', {
+          group_id: group.group_id, type, paths: group.photos.map((p: any) => p.path),
+        });
+        expect(component['hiddenGroups']().has(`${group.group_id}_${type}`)).toBe(true);
+      },
+    );
+    it('does not dissolve automatic groups', async () => {
+      component['dismissGroup'](component['groups']()[1]);
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(mockApi.post).not.toHaveBeenCalled();
+    });
+    it('cancels without changing photos or dissolving the group', async () => {
+      const group = component['groups']()[0];
+      component['dismissGroup'](group);
+      component['cancelPass'](group);
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(mockApi.post).not.toHaveBeenCalled();
+      expect(component['hiddenGroups']().size).toBe(0);
+      expect(component['dismissingGroups']().size).toBe(0);
+    });
+    it('keeps the group visible on failure and allows retry', async () => {
+      mockApi.post.mockReturnValue(throwError(() => new Error('offline')));
+      const group = component['groups']()[0];
+      component['dismissGroup'](group);
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(component['hiddenGroups']().size).toBe(0);
+      expect(component['dismissingGroups']().size).toBe(0);
+      expect(mockSnackBar.open).toHaveBeenCalledWith('culling.dissolve_failed', '', expect.anything());
+      component['dismissGroup'](group);
+      component['cancelPass'](group);
+    });
+    it('sends full membership including rejected manual members', async () => {
+      const group = { ...component['groups']()[0], member_paths: ['/photo1.jpg', '/photo2.jpg', '/photo3.jpg', '/rejected.jpg'] };
+      component['dismissGroup'](group);
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(mockApi.post).toHaveBeenCalledWith('/culling-groups/dismiss', expect.objectContaining({
+        paths: group.member_paths,
+      }));
+    });
+    it('excludes a dissolving group from individual and bulk confirmation', async () => {
+      const group = component['groups']()[0];
+      component['dismissGroup'](group);
+      expect(component['confirmGroup'](group)).toBe(false);
+      await component['confirmAllRemaining']();
+      expect(mockApi.post.mock.calls.filter(([url, body]) =>
+        url === '/culling-groups/confirm' && body.group_id === group.group_id)).toEqual([]);
+      component['cancelPass'](group);
+    });
+    it('persists dissolution when leaving during the countdown', async () => {
+      component['dismissGroup'](component['groups']()[0]);
+      component.ngOnDestroy();
+      await Promise.resolve();
+      expect(mockApi.post).toHaveBeenCalledWith('/culling-groups/dismiss', expect.anything());
+    });
+  });
+
   describe('fresh manual culling groups', () => {
     async function loadManual(): Promise<void> {
       mockApi.get.mockReturnValue(of({
         ...mockCullingGroupsResponse,
-        groups: [{ ...mockCullingGroupsResponse.groups[0], group_id: -1, type: 'manual' }],
+        groups: [{ ...mockCullingGroupsResponse.groups[0], group_id: -1, type: 'manual_similar' }],
         total_groups: 1,
       }));
       await (component as any).loadGroups();
@@ -122,7 +195,7 @@ describe('BurstCullingComponent', () => {
     });
 
     it('blocks automatic culling while viewing manual groups', async () => {
-      component['groupBy'].set('manual');
+      component['groupBy'].set('manual_similar');
       await component['openAutoCull']();
       expect(mockApi.post).not.toHaveBeenCalled();
     });
@@ -1422,6 +1495,72 @@ describe('BurstCullingComponent', () => {
     });
   });
 
+  describe('unified group types', () => {
+    beforeEach(async () => { await (component as any).loadGroups(); });
+    it('offers six group types without a scene type', () => {
+      expect(component['groupTypeChoices']).toEqual(['manual_similar','hdr_panorama','panorama','bracket','burst','similar']);
+    });
+    it('changes the type with a stable group ID and the full member snapshot', async () => {
+      const group = { ...component['groups']()[0], member_paths:['/photo1.jpg','/photo2.jpg','/photo3.jpg','/hidden.jpg'] };
+      await component['changeGroupType'](group,'panorama');
+      expect(mockApi.post).toHaveBeenCalledWith('/culling-groups/type',{
+        group_id:group.group_id,type:'panorama',paths:group.member_paths,
+      });
+    });
+    it('reports a failed type change and retains the existing group', async () => {
+      mockApi.post.mockReturnValue(throwError(() => new Error('failed')));
+      const group = component['groups']()[0];
+      await component['changeGroupType'](group,'panorama');
+      expect(component['groups']()[0]).toBe(group);
+      expect(mockSnackBar.open).toHaveBeenCalledWith('culling.change_type_failed','',expect.anything());
+    });
+  });
+
+  describe('shared rejection state across groups', () => {
+    beforeEach(async () => {
+      const first = mockCullingGroupsResponse.groups[0];
+      const overlapping = { ...mockCullingGroupsResponse.groups[1],
+        photos: [first.photos[1], ...mockCullingGroupsResponse.groups[1].photos], count: 3,
+        best_path: first.photos[1].path };
+      mockApi.get.mockReturnValue(of({ ...mockCullingGroupsResponse, groups: [first, overlapping] }));
+      await (component as any).loadGroups();
+    });
+
+    it('removes a rejected photo and its keep choice from other groups immediately', async () => {
+      vi.useFakeTimers();
+      try {
+        const first = component['groups']()[0];
+        component['confirmGroup'](first);
+        await vi.advanceTimersByTimeAsync(7000);
+        const second = component['groups']()[1];
+        expect(second.photos.map(p => p.path)).not.toContain('/photo2.jpg');
+        expect(second.best_path).not.toBe('/photo2.jpg');
+        expect(component['selectionsMap']().get(second.group_id)?.has('/photo2.jpg')).not.toBe(true);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('bulk confirmation uses updated members instead of keeping a rejected photo', async () => {
+      component['selectionsMap'].update(map => new Map(map).set(2, new Set(['/photo4.jpg'])));
+      await component['confirmAllRemaining']();
+      const secondRequest = mockApi.post.mock.calls.filter(([url]) => url === '/culling-groups/confirm')[1][1];
+      expect(secondRequest.paths).toEqual(['/photo4.jpg', '/photo5.jpg']);
+      expect(secondRequest.keep_paths).not.toContain('/photo2.jpg');
+    });
+
+    it('requires a new choice when another group loses every keep candidate', async () => {
+      await component['confirmAllRemaining']();
+      expect(mockApi.post.mock.calls.filter(([url]) => url === '/culling-groups/confirm')).toHaveLength(1);
+      expect(component['selectionsMap']().has(2)).toBe(false);
+      expect(component['confirmedGroups']().has('2_similar')).toBe(false);
+    });
+
+    it('hides another group when fewer than two photos remain', () => {
+      const second = component['groups']()[1];
+      (component as any).removeRejectedFromGroups(['/photo2.jpg', '/photo4.jpg']);
+      expect(component['visibleGroups']().some(g => g.group_id === second.group_id)).toBe(false);
+    });
+  });
+
   describe('confirmAllRemaining', () => {
     beforeEach(async () => {
       await (component as any).loadGroups();
@@ -2068,6 +2207,36 @@ describe('BurstCullingComponent', () => {
       seed();
 
       expect(component['pendingCorrections']()).toBe(0);
+    });
+
+    it('reloads applied corrections when detection succeeds', async () => {
+      seed();
+      await component['correctSequence'](component['groups']()[0]);
+      expect(component['pendingCorrections']()).toBe(1);
+      const applied = structuredClone(component['groups']());
+      applied[0].photos.forEach(p => p.sequence_override_pending = 0);
+      mockApi.get.mockClear();
+      mockApi.get.mockImplementation((url: string) => of(url === '/scan/recompute_status'
+        ? { running: false, kind: 'panoramas', exit_code: 0 }
+        : { ...mockCullingGroupsResponse, groups: applied }));
+
+      await (component as any).pollDetection();
+
+      expect(mockApi.get).toHaveBeenCalledWith('/culling-groups', expect.any(Object));
+      expect(component['pendingCorrections']()).toBe(0);
+    });
+
+    it.each([1, null])('keeps corrections pending for unsuccessful or unknown exit code %s', async exitCode => {
+      seed();
+      await component['correctSequence'](component['groups']()[0]);
+      mockApi.get.mockClear();
+      mockApi.get.mockReturnValue(of({ running: false, kind: 'panoramas', exit_code: exitCode }));
+
+      await (component as any).pollDetection();
+
+      expect(component['detectFailed']()).toBe(true);
+      expect(component['pendingCorrections']()).toBe(1);
+      expect(mockApi.get).not.toHaveBeenCalledWith('/culling-groups', expect.any(Object));
     });
   });
 

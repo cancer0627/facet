@@ -246,6 +246,7 @@ const SOCIAL_SOURCE_KEYS: Record<string, string> = {
 
           <!-- Category explainer: "why isn't this photo classified as X?" -->
           <app-bird-results [path]="p.path" />
+          <app-bird-results [path]="p.path" species="elephant" />
           @if (auth.isEdition()) {
             <div class="border-t border-[var(--mat-sys-outline-variant)] pt-3">
               <button mat-button class="!px-0 !min-w-0" (click)="toggleExplainer()">

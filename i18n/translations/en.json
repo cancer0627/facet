@@ -441,7 +441,8 @@
     "face_confidence": "Face Confidence",
     "is_favorite": "Favorites",
     "is_rejected": "Rejected",
-    "narrative_moment_confidence": "Moment Confidence"
+    "narrative_moment_confidence": "Moment Confidence",
+    "elephant_sharpness": "Head and eye sharpness"
   },
   "photo_types": {
     "all": "All Photos",
@@ -1912,6 +1913,12 @@
     "threshold": "Similarity",
     "load_more": "Load more",
     "view_detail": "View detail",
+    "change_type": "Change group type",
+    "change_type_failed": "Could not change group type. Refresh and try again.",
+    "dissolve": "Dissolve group",
+    "dissolve_tooltip": "Remove this culling group only; preserve all photo attributes. You can cancel within 7 seconds.",
+    "dissolved": "Group dissolved; photo attributes preserved",
+    "dissolve_failed": "Could not dissolve the group. Refresh and try again.",
     "cancel_pass": "Cancel",
     "cancel_restore": "Restore",
     "darkroom": "Darkroom",
@@ -2036,7 +2043,7 @@
       "panoramas": "Panoramas",
       "hdr_panoramas": "HDR panoramas",
       "tooltip": "Choose which kind of near-duplicate groups to review",
-      "manual": "Manual"
+      "manual": "Manual similar"
     },
     "darkroom_tooltip": "Open the full-screen darkroom to compare frames and pick the keepers",
     "cull_style": {
@@ -2080,14 +2087,14 @@
       "correction_failed": "Could not save the correction",
       "rerun_banner": "Corrections waiting on a detection run: {count}",
       "rerun_running": "Detection running…",
-      "rerun_done": "Detection finished — reload to see the new labels",
+      "rerun_done": "Detection finished — groups updated",
       "rerun_failed": "Could not run detection",
       "rerun_busy": "Another library job is running; try again when it finishes"
     },
     "manual": {
-      "add": "Create culling group",
-      "group_name": "Manual culling group",
-      "bounds": "Select 2–500 individual photos, rather than the entire filtered view.",
+      "add": "New manual similarity group",
+      "group_name": "Manual similarity group",
+      "bounds": "Select 2–500 individual photos, rather than the entire filtered view. Selected rejected photos are restored when the group is created.",
       "fresh_review": "Choose which photos to keep again",
       "save_error": "Could not create the culling group. Please retry.",
       "saved": "Culling group created. Choose which photos to keep again."
@@ -2671,7 +2678,8 @@
       "retrain": "Personal ranking training",
       "maintenance": "Library maintenance",
       "tagging": "Photo tagging",
-      "repair": "Library repair"
+      "repair": "Library repair",
+      "elephants": "Elephant sharpness detection"
     },
     "status": {
       "queued": "Queued",
@@ -2682,5 +2690,109 @@
       "failed": "Failed",
       "interrupted": "Interrupted"
     }
+  },
+  "elephants": {
+    "outdated": "This result uses an older scoring version and is excluded from current sharpness sorting and filtering. Select the photos and run detection again to update it.",
+    "old_badge": "Old score",
+    "details": "View elephant detection result",
+    "actions": "Detection and scoring",
+    "title": "Elephant sharpness detection",
+    "description": "Detect elephants in {count} selected photos, verify visible eyes, then measure head and eye sharpness. Required models download on first use. Photos stay local.",
+    "score_hint": "Experimental, uncalibrated reference score from verified visible eye and head regions; the lower score wins. Body or background detail cannot compensate for blurred eyes. Uncertain localization or detail remains unscored for review. This is not detection confidence or a percentage.",
+    "score": "Best eligible elephant head and eye sharpness",
+    "tiled": "Improve small-elephant detection",
+    "tiled_hint": "Also inspect overlapping image tiles. This takes longer and may still miss small or overlapping birds.",
+    "recompute": "Re-detect existing results",
+    "start": "Start detection",
+    "stop": "Stop",
+    "background": "Continue in background",
+    "run_again": "New detection",
+    "view_results": "View results",
+    "progress_action": "Elephant detection progress",
+    "progress": "Processed {completed} / {total} photos",
+    "counts": "Processed: {succeeded} · Cached: {skipped} · Failed: {failed}",
+    "resume_hint": "Completed results are saved. Reopen this dialog to check progress; selecting the photos again skips valid cached results.",
+    "stopping": "Stopping after the current model operation…",
+    "busy": "Another library task is running. Try again when it finishes.",
+    "start_error": "Could not start detection. Check the service and try again.",
+    "progress_error": "Could not read progress. Retrying…",
+    "detected_count": "Located {count} elephant candidates",
+    "show_location": "Show elephant locations and best crop",
+    "location_alt": "Detected elephant locations",
+    "box_hint": "Green marks the highest head and eye reference score; orange marks other candidates. Thin outlines show elephant segmentation. In the crop, pink circles show eye measurement regions and blue circles show head regions.",
+    "crop_alt": "Selected elephant crop, segmentation and head and eye measurement regions",
+    "stale": "The original image changed or is unavailable. Run detection again before using this result.",
+    "result_scope": "Showing photos from this detection",
+    "leave_results": "Leave these results",
+    "status_filter": "Elephant detection status",
+    "all_results": "All statuses",
+    "phase": {
+      "preparing": "Preparing selected photos",
+      "loading_model": "Loading model (download on first use)",
+      "detecting": "Detecting and scoring birds",
+      "completed": "Detection completed",
+      "cancelled": "Detection stopped; completed results are saved",
+      "failed": "Detection failed",
+      "selecting_birds": "Selecting from existing elephant detections",
+      "verifying_focus": "Locating head and eyes and measuring original-image sharpness"
+    },
+    "photo_status": {
+      "scored": "Scored",
+      "unjudgeable": "Head or eye position or detail needs review",
+      "error": "Processing failed",
+      "unprocessed": "Not processed",
+      "no_elephant": "No elephant detected"
+    },
+    "inspect_bird": "Inspect crop",
+    "bird_number": "Elephant {number}",
+    "reason": {
+      "truncated": "Cut off by a tile boundary; not scored.",
+      "no_mask": "Elephant could not be reliably separated; not scored.",
+      "too_small": "Too small to score.",
+      "insufficient_detail": "Not enough reliable internal detail to judge sharpness.",
+      "low_mask_resolution": "Segmentation is too coarse to judge sharpness reliably.",
+      "frame_edge": "Near the original frame edge; the elephant may be incomplete and does not contribute to the photo score. Any local detail estimate is retained for review.",
+      "below_min_area": "Below the size threshold and excluded from the photo score. The crop remains available. Lowering the threshold measures newly eligible heads and eyes.",
+      "focus_unverified": "Head and eye localization or local detail cannot support a reliable measurement. Review this candidate; it does not contribute to the photo score.",
+      "head_unlocalized": "Eye and neck confidence, agreement across views or position requirements were not met. Head and eye regions could not be reliably located; not scored.",
+      "eye_detail_insufficient": "Head and eyes were located, but usable detail, size or original-image coverage is insufficient for a reliable score.",
+      "eye_unverified": "Head and eye localization or local detail cannot support a reliable measurement. Review this candidate; it does not contribute to the photo score."
+    },
+    "min_area": "Minimum elephant size for photo scoring",
+    "min_area_hint": "Measured as bounding box area relative to the full photo. Smaller candidates remain available to inspect but do not determine the score. Changing the threshold requires re-detection.",
+    "area_all": "Any size",
+    "area_small": "Small (at least 0.25%)",
+    "area_medium": "Medium (at least 1%, default)",
+    "area_large": "Large (at least 3%)",
+    "area_xlarge": "Extra large (at least 7%)",
+    "size_rule": "Size threshold: bounding box covers at least {percent}% of the photo",
+    "small_excluded": "{count} small candidates are excluded from the photo score and remain available to inspect.",
+    "size_metric": "Bounding box: {width} × {height} pixels, {percent}% of the photo",
+    "focus_review": "Needs review",
+    "focus_unverified_count": "{count} candidates lack reliable head and eye measurements and require review. They do not contribute to the photo score.",
+    "assessment": {
+      "pass": "Pass",
+      "fail": "Fail",
+      "review": "Review"
+    },
+    "assessment_hint": "Prioritize visible eye and head detail. Uncertain localization or detail needs review. Body clipping does not disqualify clear head and eyes.",
+    "assessment_reason": {
+      "complete_and_clear": "Verified visible eye and head regions measure clearly.",
+      "body_clipped": "The detected elephant reaches the image boundary and does not pass the full-framing requirement.",
+      "body_uncertain": "Full framing is uncertain. Check wing tips, tail and occlusion.",
+      "head_eye_blurred": "A verified head or eye region is clearly blurred.",
+      "head_eye_uncertain": "The actual head or eye location, or usable detail, is uncertain. Inspect the crop.",
+      "focus_borderline": "Head and eye detail is borderline and needs review.",
+      "stale": "The original changed or is unavailable. Run detection again.",
+      "outdated": "The detection uses older rules. Run detection again.",
+      "unavailable": "Valid detection evidence is missing. Run detection first.",
+      "below_min_area": "This elephant is below the size threshold and does not determine this photo’s result.",
+      "no_eligible_elephant": "No eligible elephant candidate is available. Check the original or size threshold.",
+      "head_unlocalized": "Eye and neck confidence, agreement across views or position requirements were not met. Head and eye regions could not be reliably located; not scored.",
+      "eye_unverified": "Head and eye localization or local detail cannot support a reliable measurement. Review this candidate; it does not contribute to the photo score.",
+      "eye_detail_insufficient": "Head and eyes were located, but usable detail, size or original-image coverage is insufficient for a reliable score."
+    },
+    "focus_score": "Head and eye sharpness",
+    "focus_score_hint": "Experimental, uncalibrated reference score from verified visible eye and head regions; the lower score wins. Body or background detail cannot compensate for blurred eyes. Uncertain localization or detail remains unscored for review. This is not detection confidence or a percentage."
   }
 }

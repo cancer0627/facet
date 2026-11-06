@@ -401,7 +401,7 @@
     "camera": "相机"
   },
   "sort_options": {
-    "bird_sharpness": "最佳鸟类清晰度",
+    "bird_sharpness": "鸟类头眼清晰度",
     "aggregate": "综合评分",
     "vcg_submission_score": "视觉中国申请分",
     "aesthetic": "美观度",
@@ -441,7 +441,8 @@
     "face_confidence": "人脸检测置信度",
     "is_favorite": "收藏",
     "is_rejected": "已淘汰",
-    "narrative_moment_confidence": "时刻分组置信度"
+    "narrative_moment_confidence": "时刻分组置信度",
+    "elephant_sharpness": "大象头眼清晰度"
   },
   "photo_types": {
     "all": "全部照片",
@@ -1912,6 +1913,12 @@
     "threshold": "相似度",
     "load_more": "加载更多",
     "view_detail": "查看详情",
+    "change_type": "修改分组类型",
+    "change_type_failed": "修改分组类型失败，请刷新后重试。",
+    "dissolve": "解散分组",
+    "dissolve_tooltip": "仅移除此选片组，保留照片所有其他属性；7 秒内可取消。",
+    "dissolved": "分组已解散，照片其他属性已保留",
+    "dissolve_failed": "解散分组失败，请刷新后重试。",
     "cancel_pass": "取消",
     "cancel_restore": "恢复",
     "darkroom": "暗房",
@@ -2036,7 +2043,7 @@
       "panoramas": "全景照片组",
       "hdr_panoramas": "HDR 全景照片组",
       "tooltip": "选择要复核的近似重复照片分组类型",
-      "manual": "手动"
+      "manual": "手动相似"
     },
     "darkroom_tooltip": "打开全屏暗房，对比照片并选出要保留的作品",
     "cull_style": {
@@ -2080,14 +2087,14 @@
       "correction_failed": "无法保存修正",
       "rerun_banner": "等待下次检测生效的修正：{count}",
       "rerun_running": "正在检测…",
-      "rerun_done": "检测完成，请重新加载以查看新标签",
+      "rerun_done": "检测完成，已更新分组",
       "rerun_failed": "无法运行检测",
       "rerun_busy": "另一个照片库任务正在运行，请等其完成后再试"
     },
     "manual": {
-      "add": "新建选片组",
-      "group_name": "手动选片组",
-      "bounds": "请逐张勾选 2～500 张照片，不支持“选择整个筛选结果”。",
+      "add": "新建手动相似组",
+      "group_name": "手动相似组",
+      "bounds": "请逐张勾选 2～500 张照片，不支持“选择整个筛选结果”。新建时会先恢复所选的已淘汰照片。",
       "fresh_review": "请重新选择保留照片",
       "save_error": "新建选片组失败，请重试。",
       "saved": "已新建选片组，请重新选择保留照片"
@@ -2556,7 +2563,7 @@
     "title": "鸟类清晰度检测",
     "description": "检测所选的 {count} 张照片，逐只分离鸟体、定位眼睛和喙，再测量头眼清晰度。首次使用共下载约 290 MB（兆字节）模型，照片在本机处理。",
     "score_hint": "实验性头眼清晰度参考分：以眼周和头部测量中的较低分为准，翅膀或背景的清楚细节不能补偿眼周模糊。定位不稳定、眼睛不可可靠定位或细节不足时不评分，标为待复核。尚无经过人工校准的合格线，请结合局部图检查。",
-    "score": "有效候选的头眼清晰度",
+    "score": "鸟类头眼清晰度",
     "tiled": "增强小鸟检测",
     "tiled_hint": "同时检查重叠的原图分块，耗时更长；仍可能漏检远处或重叠的鸟。",
     "recompute": "重新检测已有结果",
@@ -2646,7 +2653,7 @@
       "below_min_area": "此鸟小于大小门槛，不决定本张照片结论。",
       "no_eligible_bird": "没有可用于判断的鸟类候选，请检查原图或大小门槛。"
     },
-    "focus_score": "头眼清晰度",
+    "focus_score": "鸟类头眼清晰度",
     "focus_score_hint": "只对已核验的头部和眼周测量给分，分数越高清晰度越高；无法可靠定位、测量或确认完整入镜时留空并标待复核。分数不是识别置信度，也不是清晰百分比。"
   },
   "tasks": {
@@ -2671,7 +2678,8 @@
       "retrain": "个人偏好模型训练",
       "maintenance": "照片库维护",
       "tagging": "照片标注",
-      "repair": "照片库修复"
+      "repair": "照片库修复",
+      "elephants": "大象清晰度检测"
     },
     "status": {
       "queued": "等待中",
@@ -2682,5 +2690,109 @@
       "failed": "失败",
       "interrupted": "已中断"
     }
+  },
+  "elephants": {
+    "outdated": "此结果来自旧版评分，已停止参与当前清晰度排序和筛选。重新选择照片并开始检测即可更新，无需勾选强制重新检测。",
+    "old_badge": "旧版",
+    "details": "查看大象检测结果",
+    "actions": "检测与评分",
+    "title": "大象清晰度检测",
+    "description": "只检测所选的 {count} 张照片，分离大象并核验可见眼睛位置，再测量头部和眼周清晰度。首次使用会下载所需模型，照片在本机处理。",
+    "score_hint": "只对已核验的可见眼周和头部测量给分，以较低分为准；身体或背景细节不能补偿眼周模糊。无法可靠定位或测量时留空并标为待复核。实验性参考分尚未经过人工校准，不是识别置信度或清晰百分比。",
+    "score": "大象头眼清晰度",
+    "tiled": "增强小目标检测",
+    "tiled_hint": "同时检查重叠的原图分块，耗时更长；仍可能漏检远处或重叠的大象。",
+    "recompute": "重新检测已有结果",
+    "start": "开始检测",
+    "stop": "停止",
+    "background": "后台继续",
+    "run_again": "新建检测",
+    "view_results": "查看结果",
+    "progress_action": "查看大象检测进度",
+    "progress": "已处理 {completed} / {total} 张照片",
+    "counts": "完成：{succeeded} · 跳过已有结果：{skipped} · 失败：{failed}",
+    "resume_hint": "已完成结果会保存。可重新打开此窗口查看进度；再次选择这些照片检测时，会跳过仍然有效的已有结果。",
+    "stopping": "将在当前模型操作结束后停止…",
+    "busy": "有其他照片库任务正在运行，请完成后重试。",
+    "start_error": "无法开始检测，请检查服务后重试。",
+    "progress_error": "暂时无法读取进度，正在重试…",
+    "detected_count": "定位到 {count} 个大象候选",
+    "show_location": "查看大象的位置和最佳局部图",
+    "location_alt": "检测到的大象位置",
+    "box_hint": "绿色框为头眼参考分最高的大象，橙色框为其他候选；细线表示象体分割范围。局部图的紫色圆为眼周测量区，蓝色圆为头部测量区。",
+    "crop_alt": "选中大象的局部图、分割轮廓及头眼测量区域",
+    "stale": "原图已变化或无法读取，请重新检测后再使用此结果。",
+    "result_scope": "当前显示本次检测的照片",
+    "leave_results": "退出本次结果",
+    "status_filter": "大象检测状态",
+    "all_results": "全部状态",
+    "phase": {
+      "preparing": "准备所选照片",
+      "loading_model": "加载模型（首次使用会下载）",
+      "detecting": "检测大象并评估局部清晰度",
+      "completed": "检测完成",
+      "cancelled": "检测已停止，已完成结果已保存",
+      "failed": "检测失败",
+      "selecting_birds": "按大小筛选已有检测结果",
+      "verifying_focus": "定位头眼并测量原图清晰度"
+    },
+    "photo_status": {
+      "scored": "已评分",
+      "unjudgeable": "头眼位置或有效细节不足，待复核",
+      "error": "处理失败",
+      "unprocessed": "尚未检测",
+      "no_elephant": "未检测到大象"
+    },
+    "inspect_bird": "查看局部",
+    "bird_number": "第 {number} 头",
+    "reason": {
+      "truncated": "目标被分块边界截断，未评分。",
+      "no_mask": "尚未可靠分离象体，未评分。",
+      "too_small": "目标过小，未评分。",
+      "insufficient_detail": "象体内部可靠细节不足，无法判断清晰度。",
+      "low_mask_resolution": "象体分割过粗，无法可靠判断清晰度。",
+      "frame_edge": "目标靠近原图边缘，可能只拍到部分象体，不参与照片评分；已有局部细节估计保留供复核。",
+      "below_min_area": "此大象小于大小门槛，不参与照片评分；仍可查看局部图。调整门槛后会补测新参与候选的头眼。",
+      "focus_unverified": "头眼定位或局部细节不足以支持可靠测量。此目标待复核，不参与照片评分。",
+      "head_unlocalized": "眼睛和颈部的定位置信度、多视图一致性或位置条件未满足，无法可靠确定头眼区域，未评分。",
+      "eye_detail_insufficient": "已定位到头眼，但眼周或头部的有效细节、尺寸或原图覆盖不足，无法可靠评分。",
+      "eye_unverified": "头眼定位或局部细节不足以支持可靠测量。此目标待复核，不参与照片评分。"
+    },
+    "min_area": "参与评分的最小大象大小",
+    "min_area_hint": "按大象定位框占整张照片的面积计算。较小候选保留供查看，但不决定照片得分。调整门槛后重新检测。",
+    "area_all": "不限大小",
+    "area_small": "较小（至少 0.25%）",
+    "area_medium": "中等（至少 1%，默认）",
+    "area_large": "较大（至少 3%）",
+    "area_xlarge": "更大（至少 7%）",
+    "size_rule": "大小门槛：定位框至少占画面的 {percent}%",
+    "small_excluded": "有 {count} 个过小候选不参与照片评分，仍可逐只查看。",
+    "size_metric": "定位框：{width} × {height} 像素，占画面的 {percent}%",
+    "focus_review": "待复核",
+    "focus_unverified_count": "{count} 个候选的头眼尚无法可靠测量，待复核，不参与照片评分。",
+    "assessment": {
+      "pass": "合格",
+      "fail": "不合格",
+      "review": "待复核"
+    },
+    "assessment_hint": "优先检查可见眼睛和头部清晰度；无法可靠定位或测量时待复核。身体不完整不直接否定头眼清晰度。",
+    "assessment_reason": {
+      "complete_and_clear": "已核验的可见眼周和头部测量清楚。",
+      "body_clipped": "象体检测范围触及画面边界，未通过完整入镜要求。",
+      "body_uncertain": "无法确认整头大象完整入镜，请检查翼尖、尾部和遮挡。",
+      "head_eye_blurred": "已确认的头部或眼周存在明显模糊，未通过要求。",
+      "head_eye_uncertain": "尚无法确认真实头眼位置，或有效细节不足，请查看局部图。",
+      "focus_borderline": "头眼清晰程度处于不确定区间，需要复核。",
+      "stale": "原图已变化或无法读取，请重新检测。",
+      "outdated": "检测结果来自旧规则，请重新检测。",
+      "unavailable": "缺少有效检测证据，请先运行检测。",
+      "below_min_area": "此大象小于大小门槛，不决定本张照片结论。",
+      "no_eligible_elephant": "没有可用于判断的大象候选，请检查原图或大小门槛。",
+      "head_unlocalized": "眼睛和颈部的定位置信度、多视图一致性或位置条件未满足，无法可靠确定头眼区域，未评分。",
+      "eye_unverified": "头眼定位或局部细节不足以支持可靠测量。此目标待复核，不参与照片评分。",
+      "eye_detail_insufficient": "已定位到头眼，但眼周或头部的有效细节、尺寸或原图覆盖不足，无法可靠评分。"
+    },
+    "focus_score": "大象头眼清晰度",
+    "focus_score_hint": "只对已核验的可见眼周和头部测量给分，以较低分为准；身体或背景细节不能补偿眼周模糊。无法可靠定位或测量时留空并标为待复核。实验性参考分尚未经过人工校准，不是识别置信度或清晰百分比。"
   }
 }

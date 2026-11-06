@@ -1995,6 +1995,19 @@ describe('GalleryComponent', () => {
       expect(mockStore.clearSelection).toHaveBeenCalled();
     });
 
+    it('opens elephant detection and scopes results to its own job', async () => {
+      (TestBed.inject(MatDialog).open as Mock).mockReturnValue({
+        afterClosed: () => of({ jobId: 'elephant-job', changed: true, viewResults: true }),
+      });
+      await (component as unknown as { openBirdDetection(species: 'elephant'): Promise<void> }).openBirdDetection('elephant');
+      expect((TestBed.inject(MatDialog).open as Mock).mock.calls[0][1].data)
+        .toEqual({ paths: ['/a.jpg', '/b.jpg'], species: 'elephant' });
+      expect(mockStore.updateFilters).toHaveBeenCalledWith(expect.objectContaining({
+        elephant_job: 'elephant-job', bird_job: '', sort: 'elephant_sharpness', type: '',
+      }));
+      expect(mockApi.post).not.toHaveBeenCalled();
+    });
+
     it('does nothing for an empty or non-editable selection', async () => {
       mockAuth['isEdition'] = vi.fn(() => false);
       await detect();

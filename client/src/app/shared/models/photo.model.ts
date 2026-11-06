@@ -45,6 +45,14 @@ export interface Photo {
   bird_assessment?: 'pass' | 'fail' | 'review' | null;
   bird_assessment_reason?: string | null;
   bird_focus_score?: number | null;
+  elephant_sharpness?: number | null;
+  elephant_count?: number | null;
+  elephant_status?: string | null;
+  elephant_version?: string | null;
+  elephant_score_outdated?: number | null;
+  elephant_assessment?: 'pass' | 'fail' | 'review' | null;
+  elephant_assessment_reason?: string | null;
+  elephant_focus_score?: number | null;
   subject_prominence?: number | null;
   subject_placement?: number | null;
   bg_separation?: number | null;
@@ -114,6 +122,9 @@ export interface Photo {
    *  the client used to declare an `is_best_of_burst` that no backend has ever
    *  produced, so the badge keyed on it could never fire. */
   is_burst_lead: boolean | null;
+  group_id?: number | null;
+  group_type?: string | null;
+  group_source?: string | null;
   burst_group_id?: number | null;
   duplicate_group_id?: number | null;
   /** The frame that stands for its duplicate group. No template reads it yet,

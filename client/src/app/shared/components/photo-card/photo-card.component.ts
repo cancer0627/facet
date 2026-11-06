@@ -163,6 +163,18 @@ const DEFAULT_CLIPPING_BADGE_PERCENT = 5;
             } @else { {{ 'birds.assessment.review' | translate }} }
           </button>
         }
+        @if (currentSort() === 'elephant_sharpness' && !isSelected()) {
+          <button type="button" class="absolute top-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded bg-black/70 text-white px-2 py-1 text-xs cursor-pointer"
+                  [attr.aria-label]="'elephants.details' | translate" [title]="'elephants.details' | translate"
+                  (click)="birdPreviewClicked.emit(photo()); $event.stopPropagation()"
+                  (dblclick)="$event.stopPropagation()" (keydown.enter)="$event.stopPropagation()" (keydown.space)="$event.stopPropagation()">
+            <mat-icon class="!text-base !w-4 !h-4" aria-hidden="true">center_focus_strong</mat-icon>
+            @if (photo().elephant_score_outdated) { {{ 'elephants.old_badge' | translate }} }
+            @else if (photo().elephant_focus_score !== null && photo().elephant_focus_score !== undefined) {
+              {{ photo().elephant_focus_score | fixed:1 }}
+            } @else { {{ 'elephants.assessment.review' | translate }} }
+          </button>
+        }
         <img
           [src]="photo().path | thumbnailUrl:thumbSize()"
           [alt]="photo().caption || photo().filename"

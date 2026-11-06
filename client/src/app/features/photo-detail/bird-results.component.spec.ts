@@ -16,7 +16,7 @@ describe('BirdResultsComponent', () => {
     ],
   };
 
-  async function build(overrides = {}) {
+  async function build(overrides = {}, species: 'bird' | 'elephant' = 'bird') {
     TestBed.configureTestingModule({
       imports: [BirdResultsComponent],
       providers: [
@@ -26,11 +26,24 @@ describe('BirdResultsComponent', () => {
     });
     const fixture = TestBed.createComponent(BirdResultsComponent);
     fixture.componentRef.setInput('path', '/a & b.jpg');
+    fixture.componentRef.setInput('species', species);
     fixture.detectChanges();
     await fixture.whenStable();
     fixture.detectChanges();
     return fixture;
   }
+
+  it('loads and previews elephant evidence independently', async () => {
+    const fixture = await build({ elephants: result.birds }, 'elephant');
+    const api = TestBed.inject(ApiService);
+    expect(api.get).toHaveBeenCalledWith('/elephants/photo', { path: '/a & b.jpg' });
+    const element = fixture.nativeElement as HTMLElement;
+    expect(element.textContent).toContain('elephants.title');
+    expect(element.textContent).not.toContain('birds.title');
+    element.querySelector('button')!.click();
+    fixture.detectChanges();
+    expect(element.querySelectorAll('img')[1].getAttribute('src')).toContain('/api/elephants/preview?');
+  });
 
   it('opens bird zero and lets the user inspect an unscored bird with its reason', async () => {
     const fixture = await build();

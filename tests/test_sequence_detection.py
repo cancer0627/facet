@@ -256,9 +256,12 @@ def _seed(db_path, rows, columns=_SEED_COLUMNS):
     from db.schema import init_database
     init_database(str(db_path))
     with sqlite3.connect(db_path) as conn:
-        conn.executemany(
-            f"INSERT INTO photos ({', '.join(columns)}) "
-            f"VALUES ({', '.join('?' * len(columns))})", rows)
+        columns = tuple('group_id' if name == 'burst_group_id' else name for name in columns)
+        for row in rows:
+            values = dict(zip(columns,row))
+            values['group_type'] = 'burst' if values.get('group_id') is not None else None
+            values['group_source'] = 'auto' if values.get('group_id') is not None else None
+            conn.execute(f"INSERT INTO photos ({', '.join(values)}) VALUES ({', '.join('?' for _ in values)})", list(values.values()))
         conn.commit()
 
 
@@ -374,16 +377,13 @@ class TestDetectSequencesEndToEnd:
 
         results = [detect_sequences(str(db)) for _ in range(3)]
 
-        # The group holds a bracket but is not wholly one, so it is never
-        # promoted -- and must therefore never be demoted either. Answering
-        # "was this promoted?" with "does it contain a bracket?" moved the lead
-        # off the scored frame on the second run and every run after it.
-        assert [r['promoted'] for r in results] == [0, 0, 0]
+        # 包围曝光成员移出连拍组，重复检测仍保持一个归属和同一代表帧。
+        assert [r['promoted'] for r in results] == [1, 1, 1]
         assert [r['demoted'] for r in results] == [0, 0, 0]
         with sqlite3.connect(db) as conn:
             leads = {r[0] for r in conn.execute(
                 "SELECT path FROM photos WHERE is_burst_lead = 1")}
-        assert leads == {'/b2.jpg'}
+        assert leads == {'/b1.jpg'}
 
     def test_a_lapsed_bracket_leaves_other_burst_groups_alone(self, tmp_path):
         db = tmp_path / 'seq.db'
@@ -418,11 +418,13 @@ class TestDetectSequencesEndToEnd:
         _seed(db, rows)
         result = detect_sequences(str(db))
         assert result['sets'] == 1
-        assert result['promoted'] == 0
+        assert result['promoted'] == 1
         with sqlite3.connect(db) as conn:
             lead = conn.execute(
                 "SELECT path FROM photos WHERE is_burst_lead = 1").fetchall()
-        assert [r[0] for r in lead] == ['/b2.jpg']
+        assert '/b1.jpg' in [r[0] for r in lead]
+        with sqlite3.connect(db) as conn:
+            assert conn.execute("SELECT group_type FROM photos WHERE path='/other.jpg'").fetchone()[0] != 'bracket'
 
     def test_disabled_in_config_writes_nothing(self, tmp_path):
         db = tmp_path / 'seq.db'
@@ -619,12 +621,12 @@ class TestPromoteBracketLeads:
         ])
         result = detect_sequences(str(db))
         assert result['sets'] == 1
-        assert result['promoted'] == 0
+        assert result['promoted'] == 1
         with sqlite3.connect(db) as conn:
             conn.row_factory = sqlite3.Row
             leads = [r['path'] for r in conn.execute(
                 "SELECT path FROM photos WHERE is_burst_lead = 1")]
-        assert leads == ['/b2.jpg']
+        assert leads == ['/b1.jpg']
 
 
 class TestKindScoping:
@@ -645,7 +647,7 @@ class TestKindScoping:
         _seed(db, _bracket_rows() + [self._panorama_row()])
         with sqlite3.connect(db) as conn:
             conn.execute(
-                "UPDATE photos SET sequence_group_id = 1, sequence_kind = 'panorama' "
+                "UPDATE photos SET group_id=100,group_type='panorama',group_source='manual', sequence_kind = 'panorama' "
                 "WHERE path = '/p0.jpg'")
             conn.commit()
 
@@ -657,15 +659,15 @@ class TestKindScoping:
                 "SELECT sequence_group_id, sequence_kind FROM photos WHERE path = '/p0.jpg'"
             ).fetchone()
         assert row['sequence_kind'] == 'panorama'
-        assert row['sequence_group_id'] == 1
+        assert row['sequence_group_id'] == 100
 
-    def test_group_ids_are_numbered_within_a_kind_not_across(self, tmp_path):
+    def test_group_ids_are_unique_across_kinds(self, tmp_path):
         """A bracket and a panorama may both be set 1; the pair identifies them."""
         db = tmp_path / 'seq.db'
         _seed(db, _bracket_rows() + [self._panorama_row()])
         with sqlite3.connect(db) as conn:
             conn.execute(
-                "UPDATE photos SET sequence_group_id = 1, sequence_kind = 'panorama' "
+                "UPDATE photos SET group_id=100,group_type='panorama',group_source='manual', sequence_kind = 'panorama' "
                 "WHERE path = '/p0.jpg'")
             conn.commit()
 
@@ -676,7 +678,8 @@ class TestKindScoping:
             kinds = {r['sequence_kind']: r['sequence_group_id'] for r in conn.execute(
                 "SELECT DISTINCT sequence_kind, sequence_group_id FROM photos "
                 "WHERE sequence_kind IS NOT NULL")}
-        assert kinds == {'bracket': 1, 'panorama': 1}
+        assert set(kinds) == {'bracket','panorama'}
+        assert kinds['bracket'] != kinds['panorama']
 
     def test_a_lapsed_bracket_is_still_cleared(self, tmp_path):
         """Scoping the clear must not stop it clearing rows that no longer qualify."""

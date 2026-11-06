@@ -29,6 +29,14 @@ from utils.panorama import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path, monkeypatch):
+    # 检测用例不应读取使用者机器上的自动检测开关或自定义阈值。
+    config = tmp_path / 'default-config.json'
+    config.write_text('{}')
+    monkeypatch.setenv('FACET_CONFIG', str(config))
+
+
 def _sequence_labels(db_path):
     """Every stored panorama label, as a comparable snapshot."""
     with sqlite3.connect(db_path) as conn:
@@ -294,8 +302,9 @@ class TestDetectPanoramasEndToEnd:
         db = tmp_path / 'pano.db'
         _seed_sweep(db)
         with sqlite3.connect(db) as conn:
-            conn.execute("INSERT INTO photos (path, filename, sequence_group_id, sequence_kind) "
-                         "VALUES ('/b.jpg', 'b.jpg', 1, 'bracket')")
+            conn.execute("INSERT INTO photos (path, filename, group_id, group_type, sequence_kind) "
+                         "VALUES ('/b.jpg', 'b.jpg', 100, 'bracket', 'bracket')")
+            conn.execute("INSERT INTO photos(path,filename,group_id,group_type,sequence_kind) VALUES ('/b2.jpg','b2.jpg',100,'bracket','bracket')")
             conn.commit()
 
         detect_panoramas(str(db))
@@ -312,6 +321,39 @@ class TestDetectPanoramasEndToEnd:
             'config.ScoringConfig.get_panorama_detection_settings',
             lambda self: {'enabled': False})
         assert detect_panoramas(str(db)) is None
+
+    def test_manual_redetection_applies_corrections_when_disabled(self, tmp_path):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        db = tmp_path / 'pano.db'
+        paths = _seed_sweep(db)
+        detect_panoramas(str(db))
+        set_sequence_overrides(str(db), paths, None)
+        config = tmp_path / 'scoring_config.json'
+        config.write_text('{"panorama_detection": {"enabled": false}}')
+
+        result = subprocess.run(
+            [sys.executable, str(Path(__file__).parents[1] / 'facet.py'),
+             '--detect-panoramas', '--db', str(db), '--config', str(config)],
+            capture_output=True, text=True, timeout=60)
+
+        assert result.returncode == 0, result.stderr
+        with sqlite3.connect(db) as conn:
+            assert conn.execute("SELECT count(*) FROM photo_sequence_overrides "
+                                "WHERE applied_at IS NULL").fetchone()[0] == 0
+            assert conn.execute("SELECT count(*) FROM photo_sequence_overrides").fetchone()[0] == len(paths)
+            assert conn.execute("SELECT count(*) FROM photos WHERE sequence_kind = 'panorama'").fetchone()[0] == 0
+        assert config.read_text() == '{"panorama_detection": {"enabled": false}}'
+
+    def test_manual_redetection_reports_missing_opencv(self, tmp_path, monkeypatch):
+        def unavailable(_settings):
+            raise ImportError('OpenCV unavailable')
+
+        monkeypatch.setattr('utils.panorama._sift_and_matcher', unavailable)
+        with pytest.raises(ImportError, match='OpenCV unavailable'):
+            detect_panoramas(str(tmp_path / 'pano.db'), force=True)
 
     def test_an_override_survives_a_second_run(self, tmp_path):
         """The bug the side table exists to prevent.
@@ -661,7 +703,7 @@ class TestIncrementalRunnerVsBracketPass:
         settings.update(ScoringConfig(None, validate=False).get_panorama_detection_settings())
         with sqlite3.connect(db_path) as conn:
             conn.executemany(
-                "UPDATE photos SET sequence_kind = 'hdr_panorama', sequence_group_id = 1 "
+                "UPDATE photos SET sequence_kind = 'hdr_panorama', group_id=1, group_type='hdr_panorama', group_source='auto' "
                 "WHERE path = ?", [(p,) for p in paths])
             conn.execute("UPDATE photos SET is_sequence_lead = 1 WHERE path = ?",
                          (paths[len(paths) // 2],))

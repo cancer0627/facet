@@ -16,14 +16,14 @@ describe('BirdDetectionDialogComponent', () => {
       completed: 4, succeeded: 3, skipped: 1, failed: 0, cancel_requested: 0, ...overrides };
   }
 
-  function build(paths = ['/a.jpg', '/b.jpg']) {
+  function build(paths = ['/a.jpg', '/b.jpg'], species: 'bird' | 'elephant' = 'bird') {
     get = vi.fn(() => of(job()));
     post = vi.fn(() => of(job()));
     close = vi.fn();
     TestBed.configureTestingModule({ providers: [
       { provide: ApiService, useValue: { get, post } },
       { provide: MatDialogRef, useValue: { close } },
-      { provide: MAT_DIALOG_DATA, useValue: { paths } },
+      { provide: MAT_DIALOG_DATA, useValue: { paths, species } },
     ] });
     component = TestBed.runInInjectionContext(() => new BirdDetectionDialogComponent());
   }
@@ -35,6 +35,19 @@ describe('BirdDetectionDialogComponent', () => {
   afterEach(() => {
     sessionStorage.removeItem('facet_bird_detection_job');
     vi.useRealTimers();
+  });
+
+  it('keeps elephant requests and saved progress separate from birds', async () => {
+    sessionStorage.setItem('facet_bird_detection_job', 'bird-job');
+    build(['/elephant.jpg'], 'elephant');
+    expect(get).not.toHaveBeenCalled();
+    await component.start();
+    expect(post).toHaveBeenCalledWith('/elephants/jobs', {
+      paths: ['/elephant.jpg'], tiled: true, recompute: false, min_area_percent: 1,
+    });
+    expect(sessionStorage.getItem('facet_elephant_detection_job')).toBe('job-1');
+    expect(sessionStorage.getItem('facet_bird_detection_job')).toBe('bird-job');
+    sessionStorage.removeItem('facet_elephant_detection_job');
   });
 
   it('starts only the selected paths and persists the job for reopening', async () => {

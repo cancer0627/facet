@@ -33,6 +33,14 @@ def client(edition_client):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_photo_roots(monkeypatch):
+    # 临时测试文件不应受使用者机器上的扫描目录配置影响。
+    monkeypatch.setattr('api.path_validation.get_all_scan_directories', lambda: [])
+    monkeypatch.setattr('api.path_validation.is_multi_user_enabled', lambda: False)
+    monkeypatch.setattr('api.routers.export.get_all_scan_directories', lambda: [])
+
+
+@pytest.fixture(autouse=True)
 def _no_exiftool(monkeypatch):
     """Exercise the dependency-free pure-XML sidecar path deterministically.
 

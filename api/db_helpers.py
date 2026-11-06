@@ -421,9 +421,10 @@ PHOTO_OPTIONAL_COLS = [
     'qrealign_score', 'aesthetic_v25', 'deqa_score',
     'subject_sharpness', 'subject_prominence', 'subject_placement', 'bg_separation',
     'bird_sharpness', 'bird_count', 'bird_status', 'bird_version',
+    'elephant_sharpness', 'elephant_count', 'elephant_status', 'elephant_version',
     'star_rating', 'is_favorite', 'is_rejected',
     'duplicate_group_id', 'is_duplicate_lead',
-    'burst_group_id',
+    'group_id', 'group_type', 'group_source', 'burst_group_id',
     'caption', 'caption_translated', 'gps_latitude', 'gps_longitude',
     'dominant_hue', 'color_temp',
     'form_symmetry', 'form_balance', 'form_edge_entropy', 'form_fractal', 'color_harmony',
@@ -471,12 +472,12 @@ def get_existing_columns(conn=None):
     if conn is None:
         conn = get_db_connection()
         try:
-            cursor = conn.execute('PRAGMA table_info(photos)')
+            cursor = conn.execute('PRAGMA table_xinfo(photos)')
             result = {row[1] for row in cursor.fetchall()}
         finally:
             conn.close()
     else:
-        cursor = conn.execute('PRAGMA table_info(photos)')
+        cursor = conn.execute('PRAGMA table_xinfo(photos)')
         result = {row[1] for row in cursor.fetchall()}
 
     from api import config as _config_mod
@@ -791,6 +792,34 @@ def sanitize_float_values(data):
             item['bird_assessment'] = assessment['assessment']
             item['bird_assessment_reason'] = assessment['assessment_reason']
             item['bird_focus_score'] = assessment['focus_score']
+        if '_elephant_detection' in item:
+            raw = item.pop('_elephant_detection')
+            signature = item.pop('_elephant_source_signature', None)
+            from models.elephant_focus import assess_result
+            from models.elephant_detector import RESULT_VERSION_PREFIX
+
+            try:
+                evidence = json.loads(raw or '{}')
+                if not isinstance(evidence, dict):
+                    evidence = {}
+            except (TypeError, ValueError):
+                evidence = {}
+            evidence['status'] = item.get('elephant_status')
+            evidence['outdated'] = bool(item.get('elephant_score_outdated'))
+            current = bool((item.get('elephant_version') or '').startswith(RESULT_VERSION_PREFIX)
+                           and signature and item.get('path'))
+            if current:
+                from api.path_validation import resolve_photo_disk_path
+                from processing.elephant_detection import source_signature
+                try:
+                    evidence['stale'] = source_signature(resolve_photo_disk_path(item['path'])) != signature
+                except (OSError, HTTPException):
+                    evidence['stale'] = True
+            assessment = assess_result(evidence, current=current)
+            item['elephant_assessment'] = assessment['assessment']
+            item['elephant_assessment_reason'] = assessment['assessment_reason']
+            item['elephant_focus_score'] = assessment['focus_score']
+            item['elephant_sharpness'] = assessment['focus_score']
         for key, value in item.items():
             if isinstance(value, float) and (math.isinf(value) or math.isnan(value)):
                 item[key] = None
@@ -804,6 +833,15 @@ def current_bird_score_sql():
     prefix = RESULT_VERSION_PREFIX
     return (f"(CASE WHEN substr(photos.bird_version,1,{len(prefix)})='{prefix}' "
             "THEN photos.bird_sharpness END)")
+
+
+def current_elephant_score_sql():
+    """旧版数值留在数据库中供追溯，但不与当前标尺混排。"""
+    from models.elephant_detector import RESULT_VERSION_PREFIX
+
+    prefix = RESULT_VERSION_PREFIX
+    return (f"(CASE WHEN substr(photos.elephant_version,1,{len(prefix)})='{prefix}' "
+            "THEN photos.elephant_sharpness END)")
 
 
 def build_photo_select_columns(conn, user_id=None):
@@ -828,6 +866,8 @@ def build_photo_select_columns(conn, user_id=None):
         if c in existing_cols and c not in skip_cols:
             if c in pref_col_names:
                 select_cols.append(f"{pref_cols[c]} as {c}")
+            elif c == 'elephant_sharpness' and 'elephant_version' in existing_cols:
+                select_cols.append(f'{current_elephant_score_sql()} AS elephant_sharpness')
             elif c == 'bird_sharpness' and 'bird_version' in existing_cols:
                 select_cols.append(f'{current_bird_score_sql()} AS bird_sharpness')
             else:
@@ -842,6 +882,16 @@ def build_photo_select_columns(conn, user_id=None):
     if {'bird_detection_json', 'bird_source_signature'} <= existing_cols:
         select_cols.extend(['bird_detection_json AS _bird_detection',
                             'bird_source_signature AS _bird_source_signature'])
+    if 'elephant_version' in existing_cols:
+        from models.elephant_detector import RESULT_VERSION_PREFIX
+        prefix = RESULT_VERSION_PREFIX
+        select_cols.append(
+            f"CASE WHEN elephant_version IS NOT NULL AND substr(elephant_version,1,{len(prefix)})!='{prefix}' "
+            'THEN 1 ELSE 0 END AS elephant_score_outdated'
+        )
+    if {'elephant_detection_json', 'elephant_source_signature'} <= existing_cols:
+        select_cols.extend(['elephant_detection_json AS _elephant_detection',
+                            'elephant_source_signature AS _elephant_source_signature'])
     select_cols.append(SEQUENCE_OVERRIDE_SELECT)
     select_cols.append(SEQUENCE_OVERRIDE_PENDING_SELECT)
     return select_cols
@@ -1239,6 +1289,21 @@ def get_preference_columns(user_id=None):
         'is_favorite': 'photos.is_favorite',
         'is_rejected': 'photos.is_rejected',
     }
+
+
+def require_active_culling_photos(conn, paths, user_id):
+    """在写事务内校验淘汰状态；普通选片不能隐式恢复照片。"""
+    if not conn.in_transaction:
+        conn.execute('BEGIN IMMEDIATE')
+    from_clause, from_params = get_photos_from_clause(user_id)
+    rejected_col = get_preference_columns(user_id)['is_rejected']
+    vis, vis_params = get_visibility_clause(user_id)
+    rejected = list(select_in_chunks(
+        conn, f'SELECT photos.path FROM {from_clause} '
+        f'WHERE photos.path IN ({{placeholders}}) AND ({vis}) AND {rejected_col} = 1',
+        set(paths), before=from_params, after=vis_params))
+    if rejected:
+        raise HTTPException(409, '照片已在其他操作中淘汰，请刷新分组；如需保留，请先明确恢复淘汰。')
 
 
 def set_photos_rejected(conn, paths, user_id):

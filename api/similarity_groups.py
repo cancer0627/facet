@@ -55,6 +55,20 @@ def compute_similarity_groups(conn=None, threshold=None, min_size=None, user_id=
         get_visibility_clause, album_filter_clause, time_window_clauses, HIDE_BURSTS_SQL,
     )
 
+    owned = conn is None
+    if owned:
+        conn = get_db_connection()
+    from api.unified_culling import is_unified, fetch_groups
+    from types import SimpleNamespace
+    if is_unified(conn):
+        try:
+            groups = fetch_groups(conn,None if user_id is None else SimpleNamespace(user_id=user_id),
+                                  'similar',False,album_id,date_from,date_to)
+            return [{'group_id':g['group_id'],'paths':[p['path'] for p in g['photos']],
+                     'best_path':g['best_path'],'count':g['count']} for g in groups]
+        finally:
+            if owned:
+                conn.close()
     sg_config = _get_similarity_config()
     if threshold is None:
         threshold = sg_config['default_threshold']
@@ -62,7 +76,7 @@ def compute_similarity_groups(conn=None, threshold=None, min_size=None, user_id=
         min_size = sg_config['min_group_size']
     max_photos = sg_config['max_photos']
     max_group_size = sg_config['max_group_size']
-    close_conn = False
+    close_conn = owned
     if conn is None:
         conn = get_db_connection()
         close_conn = True

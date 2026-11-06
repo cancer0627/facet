@@ -248,6 +248,15 @@ def seed_photos_prefix():
     def seed(prefix, rows):
         prefixes.append(prefix)
         for row in rows:
+            row = dict(row)
+            burst = row.pop('burst_group_id',None)
+            sequence = row.pop('sequence_group_id',None)
+            if burst is not None and burst < 0:
+                row.update(group_id=burst,group_type='manual_similar',group_source='manual',sequence_kind=None)
+            elif sequence is not None and row.get('sequence_kind'):
+                row.update(group_id=sequence,group_type=row['sequence_kind'],group_source='auto')
+            elif burst is not None:
+                row.update(group_id=burst,group_type='burst',group_source='auto')
             cols = list(row.keys())
             placeholders = ", ".join("?" for _ in cols)
             conn.execute(

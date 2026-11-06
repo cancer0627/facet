@@ -36,6 +36,16 @@ def _make_db(path, photos, persons=None, faces=None):
     init_database(path)
     conn = sqlite3.connect(path)
     for p in photos:
+        p = dict(p)
+        burst = p.pop('burst_group_id',None)
+        sequence = p.pop('sequence_group_id',None)
+        kind = p.get('sequence_kind')
+        if burst is not None and burst < 0:
+            p.update(group_id=burst,group_type='manual_similar',group_source='manual',sequence_kind=None)
+        elif kind and sequence is not None:
+            p.update(group_id=sequence,group_type=kind,group_source='auto')
+        elif burst is not None:
+            p.update(group_id=burst,group_type='burst',group_source='auto')
         cols = list(p.keys())
         placeholders = ", ".join("?" for _ in cols)
         conn.execute(
@@ -69,7 +79,7 @@ def _existing_columns(db_path):
     """
     conn = sqlite3.connect(db_path)
     try:
-        return {row[1] for row in conn.execute("PRAGMA table_info(photos)")}
+        return {row[1] for row in conn.execute("PRAGMA table_xinfo(photos)")}
     finally:
         conn.close()
 

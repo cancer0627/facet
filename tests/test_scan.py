@@ -28,6 +28,17 @@ _FACET_SCRIPT = os.path.join(_REPO_ROOT, "facet.py")
 _CLI_ARGS_SCRIPT = os.path.join(_REPO_ROOT, "cli_args.py")
 
 
+def test_completed_library_job_invalidates_culling_groups():
+    from api.routers import scan, burst_culling
+
+    proc = mock.Mock(stdout=iter(()), returncode=0)
+    with mock.patch.dict(scan._scan_state):
+        burst_culling._culling_groups_cache['stale'] = (0, [])
+        scan._read_scan_output(proc)
+        assert burst_culling._culling_groups_cache == {}
+        assert scan._scan_state['exit_code'] == 0
+
+
 @contextlib.contextmanager
 def _library_lock_held(db_path, kind="recompute", origin="cli"):
     """Hold a real library lock the way a running job holds it.

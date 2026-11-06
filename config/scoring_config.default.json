@@ -3574,6 +3574,10 @@
       ],
       "Subject Saliency": [
         {
+          "column": "elephant_sharpness",
+          "label": "Elephant Head and Eye Sharpness"
+        },
+        {
           "column": "bird_sharpness",
           "label": "Best Bird Sharpness"
         },

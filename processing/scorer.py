@@ -2657,7 +2657,7 @@ class Facet:
 # HELPER FUNCTIONS
 # ============================================
 
-def process_bursts(db_path, config_path=None):
+def process_bursts(db_path, config_path=None, only_unassigned=False):
     """Flags the highest-scoring image in groups of visually similar photos."""
     # Load burst detection settings from config
     config = ScoringConfig(config_path)
@@ -2680,9 +2680,13 @@ def process_bursts(db_path, config_path=None):
             " WHERE ls.photo_path = photos.path AND ls.user_id IS NULL "
             " AND ls.category IS NULL) AS learned_score "
             "FROM photos WHERE phash IS NOT NULL "
-            "AND (burst_group_id IS NULL OR burst_group_id >= 0) ORDER BY date_taken"
+            "AND COALESCE(group_source,'auto') != 'manual' AND (group_type IS NULL OR group_type IN ('burst','similar')) "
+            + ("AND group_id IS NULL " if only_unassigned else "") + "ORDER BY date_taken"
         ).fetchall()
         if not photos:
+            from db.photo_groups import rebuild_similar_groups
+            rebuild_similar_groups(conn,threshold=config.config.get('similarity_groups',{}).get('default_threshold',.85),max_group_size=config.config.get('similarity_groups',{}).get('max_group_size',50),max_photos=config.config.get('similarity_groups',{}).get('max_photos',10000))
+            conn.commit()
             return
 
         # Build person_id lookup only if faces exist
@@ -2694,15 +2698,6 @@ def process_bursts(db_path, config_path=None):
             ).fetchall()
             for row in face_data:
                 photo_persons.setdefault(row['photo_path'], set()).add(row['person_id'])
-
-        # Negative IDs are manual groups: preserve their members, leads and review state.
-        # Reset only photos with phash (ones that will be processed for bursts)
-        # Photos without phash are kept as NULL or set to 1 (standalone)
-        conn.execute("UPDATE photos SET is_burst_lead = 0 WHERE phash IS NOT NULL "
-                     "AND (burst_group_id IS NULL OR burst_group_id >= 0)")
-        # Mark photos without phash as standalone (they weren't part of burst detection)
-        conn.execute("UPDATE photos SET is_burst_lead = 1 WHERE phash IS NULL "
-                     "AND (burst_group_id IS NULL OR burst_group_id >= 0)")
 
         def phash_distance(hash1, hash2):
             """Compute hamming distance between two hex phash strings."""
@@ -2750,13 +2745,18 @@ def process_bursts(db_path, config_path=None):
 
             return False
 
-        # Reset burst_group_id (but preserve burst_reviewed for already-reviewed groups)
-        conn.execute("UPDATE photos SET burst_group_id = NULL WHERE phash IS NOT NULL "
-                     "AND (burst_group_id IS NULL OR burst_group_id >= 0)")
-
         current_burst = [photos[0]]
         group_id = 0
         burst_groups_for_emit = []
+        candidates = []
+        if only_unassigned:
+            existing = {}
+            for row in conn.execute("SELECT group_id,path,is_burst_lead FROM photos WHERE group_type='burst' AND COALESCE(group_source,'auto')!='manual'"):
+                group = existing.setdefault(row['group_id'], {'kind':'burst','paths':[]})
+                group['paths'].append(row['path'])
+                if row['is_burst_lead']:
+                    group['lead'] = row['path']
+            candidates.extend(existing.values())
         for i in range(1, len(photos)):
             if is_similar_to_burst(photos[i], current_burst, max_hamming_distance, time_window_minutes, rapid_burst_seconds):
                 current_burst.append(photos[i])
@@ -2766,10 +2766,8 @@ def process_bursts(db_path, config_path=None):
                     # Composite best-of: aggregate dominates, eyes-open / expression /
                     # sharpness break near-ties toward the better keeper frame.
                     winner = pick_lead([dict(p) for p in current_burst])
-                    conn.execute("UPDATE photos SET is_burst_lead = 1 WHERE path = ?", (winner['path'],))
                     if len(current_burst) >= 2:
-                        for p in current_burst:
-                            conn.execute("UPDATE photos SET burst_group_id = ? WHERE path = ?", (group_id, p['path']))
+                        candidates.append({'kind':'burst','paths':[p['path'] for p in current_burst],'lead':winner['path']})
                         burst_groups_for_emit.append({
                             'burst_group_id': group_id,
                             'photo_count': len(current_burst),
@@ -2782,10 +2780,8 @@ def process_bursts(db_path, config_path=None):
         # Handle final burst
         if current_burst:
             winner = pick_lead([dict(p) for p in current_burst])
-            conn.execute("UPDATE photos SET is_burst_lead = 1 WHERE path = ?", (winner['path'],))
             if len(current_burst) >= 2:
-                for p in current_burst:
-                    conn.execute("UPDATE photos SET burst_group_id = ? WHERE path = ?", (group_id, p['path']))
+                candidates.append({'kind':'burst','paths':[p['path'] for p in current_burst],'lead':winner['path']})
                 burst_groups_for_emit.append({
                     'burst_group_id': group_id,
                     'photo_count': len(current_burst),
@@ -2793,6 +2789,11 @@ def process_bursts(db_path, config_path=None):
                     'paths': [p['path'] for p in current_burst],
                 })
 
+        from db.photo_groups import assign_auto_groups, rebuild_similar_groups
+        assigned = assign_auto_groups(conn,candidates,['burst'])
+        rebuild_similar_groups(conn,threshold=config.config.get('similarity_groups',{}).get('default_threshold',.85),max_group_size=config.config.get('similarity_groups',{}).get('max_group_size',50),max_photos=config.config.get('similarity_groups',{}).get('max_photos',10000))
+        burst_groups_for_emit = [{'burst_group_id':g['group_id'],'photo_count':len(g['paths']),
+                                 'best_path':g['lead'],'paths':g['paths']} for g in assigned]
         conn.commit()
         logger.info("Assigned %d burst groups", group_id + 1 if current_burst and len(current_burst) >= 2 else group_id)
 

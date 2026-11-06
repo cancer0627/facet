@@ -169,7 +169,7 @@ function readStoredFaceSize(): number {
     : FACE_SIZE_DEFAULT_PX;
 }
 const GROUP_BY_VALUES = ['all', 'burst', 'similar', 'scene', 'bracket',
-                         'panorama', 'hdr_panorama', 'manual'] as const;
+                         'panorama', 'hdr_panorama', 'manual_similar'] as const;
 type GroupBy = typeof GROUP_BY_VALUES[number];
 // Sets whose frames were shot to be combined: kept whole by default, and
 // never a source of comparison pairs.
@@ -191,6 +191,8 @@ const PEAKING_CACHE_MAX = 8;
 
 function readStoredGroupBy(): GroupBy {
   const v = localStorage.getItem(CULL_GROUP_BY_KEY);
+  if (v === 'manual') return 'manual_similar';
+  if (v === 'scene') return 'all';
   return (GROUP_BY_VALUES as readonly string[]).includes(v ?? '') ? v as GroupBy : 'all';
 }
 
@@ -388,7 +390,7 @@ class RunGeneration {
                 <mat-icon>{{ 'all' | cullGroupIcon }}</mat-icon>
                 <span [class.font-bold]="groupBy() === 'all'">{{ I18N.culling.group_by.all | translate }}</span>
               </button>
-              <button mat-menu-item (click)="onGroupByChange('manual')">
+              <button mat-menu-item (click)="onGroupByChange('manual_similar')">
                 <mat-icon>library_add</mat-icon>
                 <span>{{ 'culling.group_by.manual' | translate }}</span>
               </button>
@@ -400,12 +402,6 @@ class RunGeneration {
                 <mat-icon>{{ 'similar' | cullGroupIcon }}</mat-icon>
                 <span [class.font-bold]="groupBy() === 'similar'">{{ I18N.culling.group_by.similar | translate }}</span>
               </button>
-              @if (store.config()?.features?.show_scenes || groupBy() === 'scene') {
-                <button mat-menu-item (click)="onGroupByChange('scene')">
-                  <mat-icon>{{ 'scene' | cullGroupIcon }}</mat-icon>
-                  <span [class.font-bold]="groupBy() === 'scene'">{{ I18N.culling.group_by.scenes | translate }}</span>
-                </button>
-              }
               <button mat-menu-item (click)="onGroupByChange('bracket')">
                 <mat-icon>{{ 'bracket' | cullGroupIcon }}</mat-icon>
                 <span [class.font-bold]="groupBy() === 'bracket'">{{ I18N.culling.group_by.brackets | translate }}</span>
@@ -461,22 +457,7 @@ class RunGeneration {
                 }
               </mat-menu>
             }
-            @if (groupBy() === 'similar' || groupBy() === 'all') {
-              <button mat-icon-button [matMenuTriggerFor]="thresholdMenu"
-                      [matTooltip]="(I18N.culling.threshold | translate) + ' · ' + similarityThreshold() + '%'"
-                      [attr.aria-label]="I18N.culling.threshold | translate">
-                <mat-icon>compare</mat-icon>
-              </button>
-              <mat-menu #thresholdMenu="matMenu">
-                <div class="flex items-center gap-2 px-4 py-3" tabindex="-1" (click)="$event.stopPropagation()" (keydown)="$event.stopPropagation()">
-                  <span class="text-xs opacity-60">{{ I18N.culling.threshold | translate }}</span>
-                  <mat-slider class="!w-28 !min-w-0" [min]="70" [max]="95" [step]="5" [discrete]="true">
-                    <input matSliderThumb [value]="similarityThreshold()" (valueChange)="onThresholdChange($event)" [attr.aria-label]="I18N.culling.threshold | translate" />
-                  </mat-slider>
-                  <span class="text-xs font-medium w-8">{{ similarityThreshold() }}%</span>
-                </div>
-              </mat-menu>
-            }
+
             @if (cullProfiles().length > 0) {
               <button mat-icon-button [matMenuTriggerFor]="profileMenu"
                       [class.!text-[var(--mat-sys-primary)]]="selectedProfile() !== ''"
@@ -532,7 +513,7 @@ class RunGeneration {
             </mat-slider>
           }
           @if (auth.isEdition() && !keepWholeGranularity()) {
-            <button mat-icon-button class="shrink-0" (click)="openAutoCull()" [disabled]="autoCullBusy() || groupBy() === 'manual'"
+            <button mat-icon-button class="shrink-0" (click)="openAutoCull()" [disabled]="autoCullBusy() || groupBy() === 'manual_similar'"
                     [matTooltip]="I18N.culling.auto_cull.tooltip | translate"
                     [attr.aria-label]="I18N.culling.auto_cull.button | translate">
               <mat-icon>auto_fix_high</mat-icon>
@@ -737,7 +718,7 @@ class RunGeneration {
                 <mat-icon class="inline-flex !text-base !w-4 !h-4 !leading-4 opacity-60"
                           [matTooltip]="group.type | cullGroupLabel | translate"
                           [attr.aria-label]="group.type | cullGroupLabel | translate">{{ group.type | cullGroupIcon }}</mat-icon>
-                @if (group.type === 'manual') {
+                @if (group.type === 'manual_similar') {
                   <span class="text-xs font-medium">{{ 'culling.manual.group_name' | translate }}</span>
                   <span class="text-xs opacity-60">{{ 'culling.manual.fresh_review' | translate }}</span>
                 }
@@ -811,11 +792,31 @@ class RunGeneration {
                         }
                       </mat-menu>
                     }
+                    @if (auth.isEdition()) {
+                      <button mat-icon-button [matMenuTriggerFor]="groupTypeMenu" [disabled]="confirming()"
+                              [matTooltip]="'culling.change_type' | translate"
+                              [attr.aria-label]="'culling.change_type' | translate"><mat-icon>edit_note</mat-icon></button>
+                      <mat-menu #groupTypeMenu="matMenu">
+                        @for (kind of groupTypeChoices; track kind) {
+                          <button mat-menu-item [disabled]="group.type === kind" (click)="changeGroupType(group,kind)">
+                            <mat-icon>{{ kind | cullGroupIcon }}</mat-icon>
+                            <span>{{ kind | cullGroupLabel | translate }}</span>
+                          </button>
+                        }
+                      </mat-menu>
+                    }
                     <button mat-icon-button (click)="openLightbox(group, 0)"
                             [matTooltip]="I18N.culling.darkroom_tooltip | translate"
                             [attr.aria-label]="I18N.culling.darkroom | translate">
                       <mat-icon>fullscreen</mat-icon>
                     </button>
+                    @if (auth.isEdition() && group.type === 'manual_similar') {
+                      <button mat-icon-button (click)="dismissGroup(group)" [disabled]="confirming()"
+                              [matTooltip]="I18N.culling.dissolve_tooltip | translate"
+                              [attr.aria-label]="I18N.culling.dissolve | translate">
+                        <mat-icon>link_off</mat-icon>
+                      </button>
+                    }
                     <button mat-icon-button (click)="skipGroup(group)"
                             [matTooltip]="I18N.culling.skip_tooltip | translate"
                             [attr.aria-label]="I18N.culling.skip | translate">
@@ -1524,6 +1525,7 @@ export class BurstCullingComponent implements OnDestroy {
     return !!suggested && !this.profileChosen() && this.selectedProfile() === suggested;
   });
   protected readonly excludeRejected = signal(true);
+  protected readonly groupTypeChoices = ['manual_similar','hdr_panorama','panorama','bracket','burst','similar'] as const;
   protected readonly groups = signal<CullingGroup[]>([]);
   protected readonly totalGroups = signal(0);
   protected readonly loading = signal(true);
@@ -1539,6 +1541,7 @@ export class BurstCullingComponent implements OnDestroy {
 
   /** Set of confirmed group keys (group_id + '_' + type) */
   protected readonly confirmedGroups = signal<Set<string>>(new Set());
+  protected readonly dismissingGroups = signal<Set<string>>(new Set());
 
   /** Seconds a skipped group stays cancellable before it is hidden. */
   protected readonly passCountdownSeconds = 7;
@@ -2086,7 +2089,7 @@ export class BurstCullingComponent implements OnDestroy {
     const gb = qp.get('group_by');
     // Validated against the shared list, not a repeated literal union: the
     // hand-written one silently dropped every granularity added after it.
-    if (gb && (GROUP_BY_VALUES as readonly string[]).includes(gb)) this.groupBy.set(gb as GroupBy);
+    if (gb) this.groupBy.set(gb === 'scene' ? 'all' : gb === 'manual' ? 'manual_similar' : ((GROUP_BY_VALUES as readonly string[]).includes(gb) ? gb as GroupBy : 'all'));
     void this.loadGroups();
     void this.loadAlbums();
     void this.loadCullProfiles();
@@ -2344,7 +2347,7 @@ export class BurstCullingComponent implements OnDestroy {
   private autoSelectBest(groups: CullingGroup[], base?: Map<number, Set<string>>): Map<number, Set<string>> {
     const map = base ? new Map(base) : new Map<number, Set<string>>();
     for (const group of groups) {
-      if (group.type === 'manual') continue;
+      if (group.type === 'manual_similar') continue;
       if (!map.has(group.group_id)) {
         const kept = this.computeAutoKeep(group);
         if (kept.size > 0) {
@@ -2421,7 +2424,7 @@ export class BurstCullingComponent implements OnDestroy {
     const confirmed = this.confirmedGroups();
     const map = new Map<number, Set<string>>();
     for (const group of this.groups()) {
-      if (group.type === 'manual' || confirmed.has(this.groupKey(group))) {
+      if (group.type === 'manual_similar' || confirmed.has(this.groupKey(group))) {
         const existing = this.selectionsMap().get(group.group_id);
         if (existing) map.set(group.group_id, existing);
         continue;
@@ -3062,7 +3065,7 @@ export class BurstCullingComponent implements OnDestroy {
   /** Request body for POST /culling/auto, reusing the page's scope + strictness. */
   private autoCullBody(dryRun: boolean, highlightsAlbum: string): AutoCullRequest {
     const body: AutoCullRequest = {
-      group_by: this.groupBy() === 'manual' ? 'all' : this.groupBy(),
+      group_by: this.groupBy() === 'manual_similar' ? 'all' : this.groupBy(),
       strictness: this.strictness(),
       dry_run: dryRun,
       highlights_album: highlightsAlbum,
@@ -3119,7 +3122,7 @@ export class BurstCullingComponent implements OnDestroy {
    * a snapshot the newer run is about to replace.
    */
   protected async openAutoCull(): Promise<AutoCullRunOutcome> {
-    if (this.autoCullApplying() || this.groupBy() === 'manual') return 'superseded';
+    if (this.autoCullApplying() || this.groupBy() === 'manual_similar') return 'superseded';
     // Only a fresh open clears the notices: the re-runs that raise them come back
     // through here, and clearing unconditionally would erase them on the way in —
     // including the re-run of a dry run whose preview has not landed yet.
@@ -3277,6 +3280,7 @@ export class BurstCullingComponent implements OnDestroy {
   }
 
   protected confirmGroup(group: CullingGroup): boolean {
+    if (this.dismissingGroups().has(this.groupKey(group))) return false;
     const kept = this.selectionsMap().get(group.group_id);
     // An existing empty set is an explicit decision to reject the whole group.
     if (!kept) return false;
@@ -3295,6 +3299,7 @@ export class BurstCullingComponent implements OnDestroy {
       }))
         .then(() => {
           this.addToSetSignal(this.hiddenGroups, key);
+          this.removeRejectedFromGroups(group.photos.filter(p => !kept.has(p.path)).map(p => p.path));
           void this.refreshComparisonStats();
           void this.refreshRankerStatus();
         })
@@ -3304,6 +3309,28 @@ export class BurstCullingComponent implements OnDestroy {
         });
     }, true);
     return true;
+  }
+
+  private removeRejectedFromGroups(paths: string[]): void {
+    const rejected = new Set(paths);
+    if (!rejected.size) return;
+    this.groups.update(groups => groups.map(group => {
+      const photos = group.photos.filter(photo => !rejected.has(photo.path));
+      if (photos.length === group.photos.length) return group;
+      if (photos.length < 2) this.addToSetSignal(this.hiddenGroups, this.groupKey(group));
+      return { ...group, photos, count: Math.max(photos.length, group.count - (group.photos.length - photos.length)),
+        best_path: photos.some(photo => photo.path === group.best_path) ? group.best_path : (photos[0]?.path ?? '') };
+    }));
+    this.selectionsMap.update(map => {
+      const next = new Map(map);
+      for (const [id, kept] of map) {
+        const remaining = new Set([...kept].filter(path => !rejected.has(path)));
+        // 原来的保留候选全部被淘汰后，需要重新选择，不能变成隐式“全部淘汰”。
+        if (kept.size > 0 && remaining.size === 0) next.delete(id);
+        else next.set(id, remaining);
+      }
+      return next;
+    });
   }
 
   private showConfirmationError(error: unknown): void {
@@ -3465,9 +3492,10 @@ export class BurstCullingComponent implements OnDestroy {
           '/scan/recompute_status'));
       if (status.running) return;
       this.stopDetectionPolling();
-      const failed = status.exit_code !== 0 && status.exit_code !== null;
+      const failed = status.exit_code !== 0;
       this.detectFailed.set(failed);
       this.detectMessage.set(failed ? I18N.culling.panorama.rerun_failed : I18N.culling.panorama.rerun_done);
+      if (!failed) this.resetForReload();
     } catch {
       this.stopDetectionPolling();
       this.detectFailed.set(true);
@@ -3525,10 +3553,44 @@ export class BurstCullingComponent implements OnDestroy {
     this.startCountdown(key, () => this.addToSetSignal(this.hiddenGroups, key));
   }
 
+  protected async changeGroupType(group: CullingGroup, type: typeof this.groupTypeChoices[number]): Promise<void> {
+    if (this.confirming() || this.passingGroups().has(this.groupKey(group))) return;
+    try {
+      await firstValueFrom(this.api.post('/culling-groups/type', {
+        group_id: group.group_id, type, paths: group.member_paths ?? group.photos.map(p => p.path),
+      }));
+      this.resetForReload();
+    } catch {
+      this.snackBar.open(this.i18n.t('culling.change_type_failed'), '', { duration: 4000 });
+    }
+  }
+
+  protected dismissGroup(group: CullingGroup): void {
+    if (group.type !== 'manual_similar') return;
+    const key = this.groupKey(group);
+    if (this.confirming() || this.confirmedGroups().has(key) || this.passingGroups().has(key)
+        || this.dismissingGroups().has(key)) return;
+    const paths = [...(group.member_paths ?? group.photos.map(p => p.path))];
+    this.addToSetSignal(this.dismissingGroups, key);
+    this.startCountdown(key, () => {
+      void firstValueFrom(this.api.post('/culling-groups/dismiss', {
+        group_id: group.group_id, type: group.type, paths,
+      })).then(() => {
+        this.addToSetSignal(this.hiddenGroups, key);
+        this.snackBar.open(this.i18n.t(I18N.culling.dissolved), '', { duration: 2500 });
+      }).catch(() => {
+        this.snackBar.open(this.i18n.t(I18N.culling.dissolve_failed), '', { duration: 4000 });
+      }).finally(() => {
+        this.dismissingGroups.update(s => { const next = new Set(s); next.delete(key); return next; });
+      });
+    }, true);
+  }
+
   protected cancelPass(group: CullingGroup): void {
     const key = this.groupKey(group);
     this.clearPassTimer(key);
     this.unconfirmGroup(key);
+    this.dismissingGroups.update(s => { const next = new Set(s); next.delete(key); return next; });
   }
 
   private clearPassTimer(key: string): void {
@@ -3561,6 +3623,7 @@ export class BurstCullingComponent implements OnDestroy {
 
   protected readonly confirmableCount = computed(() => this.visibleGroups().filter(
     group => !this.confirmedGroups().has(this.groupKey(group))
+      && !this.dismissingGroups().has(this.groupKey(group))
       && this.selectionsMap().has(group.group_id),
   ).length);
 
@@ -3568,27 +3631,24 @@ export class BurstCullingComponent implements OnDestroy {
     this.confirming.set(true);
     try {
       const confirmed = this.confirmedGroups();
-      const remaining = this.visibleGroups().filter(g => !confirmed.has(this.groupKey(g)));
+      const remaining = this.visibleGroups().filter(g => !confirmed.has(this.groupKey(g))
+        && !this.dismissingGroups().has(this.groupKey(g)));
       const toConfirm = remaining.filter(g => this.selectionsMap().has(g.group_id));
 
-      // Process in batches of 5 to avoid overwhelming the server
-      const batchSize = 5;
-      for (let i = 0; i < toConfirm.length; i += batchSize) {
-        const batch = toConfirm.slice(i, i + batchSize);
-        await Promise.all(batch.map(g => {
-          const kept = this.selectionsMap().get(g.group_id)!;
-          return firstValueFrom(this.api.post('/culling-groups/confirm', {
-            group_id: g.group_id,
-            type: g.type,
-            paths: g.photos.map(p => p.path),
-            keep_paths: [...kept],
-          }));
+      // 重叠组逐个确认；每次成功后剔除其他组内已淘汰的照片。
+      for (const candidate of toConfirm) {
+        const g = this.visibleGroups().find(group => this.groupKey(group) === this.groupKey(candidate));
+        if (!g || g.photos.length < 2) continue;
+        const kept = this.selectionsMap().get(g.group_id);
+        if (!kept) continue;
+        await firstValueFrom(this.api.post('/culling-groups/confirm', {
+          group_id: g.group_id,
+          type: g.type,
+          paths: g.photos.map(p => p.path),
+          keep_paths: [...kept],
         }));
-        this.confirmedGroups.update(s => {
-          const next = new Set(s);
-          for (const g of batch) next.add(this.groupKey(g));
-          return next;
-        });
+        this.addToSetSignal(this.confirmedGroups, this.groupKey(g));
+        this.removeRejectedFromGroups(g.photos.filter(p => !kept.has(p.path)).map(p => p.path));
       }
 
       this.snackBar.open(this.i18n.t(I18N.culling.confirmed), '', { duration: 2000, horizontalPosition: 'right', verticalPosition: 'bottom' });

@@ -207,6 +207,12 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
             <button mat-button (click)="store.updateFilter('bird_job', '')">{{ 'birds.leave_results' | translate }}</button>
           </div>
         }
+        @if (store.filters().elephant_job) {
+          <div class="m-2 flex flex-wrap items-center gap-2 text-sm">
+            <span>{{ 'elephants.result_scope' | translate }}</span>
+            <button mat-button (click)="store.updateFilter('elephant_job', '')">{{ 'elephants.leave_results' | translate }}</button>
+          </div>
+        }
         <!-- Hidden-photos banner -->
         @if (showHiddenBanner()) {
           <div class="mx-2 md:mx-4 mt-2 md:mt-4 px-3 py-2 rounded-md bg-[var(--mat-sys-surface-container-high)] border border-[var(--mat-sys-outline-variant)] flex items-center gap-3 text-sm">
@@ -576,6 +582,7 @@ const RENDER_MIGRATION_DISMISSED_KEY = 'facet_render_migration_dismissed';
             <button mat-button class="!hidden lg:!inline-flex" [matMenuTriggerFor]="detectionMenu"><mat-icon>center_focus_strong</mat-icon> {{ 'birds.actions' | translate }}</button>
             <mat-menu #detectionMenu="matMenu">
               <button mat-menu-item (click)="openBirdDetection()">{{ 'birds.title' | translate }}</button>
+              <button mat-menu-item (click)="openBirdDetection('elephant')">{{ 'elephants.title' | translate }}</button>
             </mat-menu>
             <button mat-button class="!hidden lg:!inline-flex" (click)="batchCategory()"><mat-icon>category</mat-icon> {{ I18N.photo.category_override.batch_action | translate }}</button>
             <button mat-button class="!hidden lg:!inline-flex" (click)="batchFavorite()"><mat-icon>favorite</mat-icon> {{ I18N.gallery.selection.favorite | translate }}</button>
@@ -1472,19 +1479,21 @@ export class GalleryComponent implements OnInit, OnDestroy {
     this.clearSelection();
   }
 
-  protected async openBirdDetection(): Promise<void> {
+  protected async openBirdDetection(species: 'bird' | 'elephant' = 'bird'): Promise<void> {
     if (!this.auth.isEdition()) return;
     const paths = await this.resolveSelectionPaths(null);
     if (!paths?.length) return;
     const { BirdDetectionDialogComponent } = await import('./bird-detection-dialog.component');
     const ref = this.dialog.open(BirdDetectionDialogComponent, {
-      width: '95vw', maxWidth: '32rem', data: { paths },
+      width: '95vw', maxWidth: '32rem', data: { paths, ...(species === 'elephant' ? { species } : {}) },
     });
     const result: BirdDialogResult | undefined = await firstValueFrom(ref.afterClosed());
     if (result?.viewResults) {
       await this.store.updateFilters({
         ...DEFAULT_FILTERS, ...loadDisplayOptionsFromStorage(),
-        bird_job: result.jobId, sort: 'bird_sharpness', sort_direction: 'DESC',
+        bird_job: species === 'bird' ? result.jobId : '',
+        elephant_job: species === 'elephant' ? result.jobId : '',
+        sort: species === 'elephant' ? 'elephant_sharpness' : 'bird_sharpness', sort_direction: 'DESC',
         hide_blinks: false, hide_bursts: false, hide_duplicates: false,
         hide_brackets: false, hide_panoramas: false, hide_rejected: false,
       });
@@ -1597,6 +1606,7 @@ export class GalleryComponent implements OnInit, OnDestroy {
       case 'rate': await this.batchRate(action.rating); break;
       case 'category': await this.batchCategory(); break;
       case 'bird-detection': await this.openBirdDetection(); break;
+      case 'elephant-detection': await this.openBirdDetection('elephant'); break;
       case 'album': await this.addToAlbum(action.albumId); break;
       case 'create-album': await this.createAlbumAndAdd(); break;
       case 'invert': this.invertSelection(); break;

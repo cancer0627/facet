@@ -686,7 +686,8 @@ LIBRARY_JOB_ARGS = (
 )
 
 
-def detect_all_sequences(db_path, config_path, incremental=False, contain_failure=True):
+def detect_all_sequences(db_path, config_path, incremental=False, contain_failure=True,
+                         force_panorama=False):
     """Label both kinds of deliberate multi-frame set, brackets first.
 
     The order is load-bearing, not incidental. An HDR panorama's frames are
@@ -705,6 +706,7 @@ def detect_all_sequences(db_path, config_path, incremental=False, contain_failur
         contain_failure: Swallow a panorama failure and carry on. False for the
             entry point whose whole purpose IS that pass, which must be able to
             report it failed.
+        force_panorama: 手动全景重检忽略自动检测开关，仅执行本次。
     """
     from utils.sequence import detect_sequences
     from utils.panorama import detect_panoramas, snapshot_panorama_labels
@@ -721,11 +723,13 @@ def detect_all_sequences(db_path, config_path, incremental=False, contain_failur
     if not contain_failure:
         return brackets, detect_panoramas(db_path, config_path=config_path,
                                           incremental=incremental,
-                                          label_snapshot=label_snapshot)
+                                          label_snapshot=label_snapshot,
+                                          force=force_panorama)
     try:
         panoramas = detect_panoramas(db_path, config_path=config_path,
                                      incremental=incremental,
-                                     label_snapshot=label_snapshot)
+                                     label_snapshot=label_snapshot,
+                                     force=force_panorama)
     except Exception:
         # Contained here rather than at each caller. The bracket pass is
         # arithmetic over stored columns and keeps failing loudly as it always
@@ -2194,7 +2198,8 @@ def main():
         # this is the command a user reaches for after editing a threshold, so
         # reusing labels or exiting 0 on a crash would both answer the wrong
         # question.
-        detect_all_sequences(args.db, args.config, contain_failure=False)
+        detect_all_sequences(args.db, args.config, contain_failure=False,
+                             force_panorama=args.detect_panoramas)
         exit()
 
     # Evaluate near-dup cosine thresholds (read-only, no GPU)

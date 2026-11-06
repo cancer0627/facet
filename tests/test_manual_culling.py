@@ -21,7 +21,8 @@ def db(tmp_path):
     conn.row_factory = sqlite3.Row
     for p in ['a', 'b', 'c', 'd']:
         conn.execute('INSERT INTO photos (path, filename, burst_reviewed, similarity_reviewed, '
-                     'is_rejected, star_rating, is_favorite) VALUES (?, ?, 1, 1, 1, 4, 1)', [p, p])
+                     'is_rejected, star_rating, is_favorite) VALUES (?, ?, 1, 1, 0, 4, 1)', [p, p])
+    conn.execute("UPDATE photos SET is_rejected = 1 WHERE path='d'")
     conn.commit()
 
     @contextmanager
@@ -34,7 +35,7 @@ def db(tmp_path):
 
     with patch.object(manual, 'get_db', context), \
             patch.object(manual, 'get_visibility_clause', return_value=('1=1', [])), \
-            patch.object(manual, 'is_multi_user_enabled', return_value=False), \
+            patch('api.db_helpers.is_multi_user_enabled', return_value=False), \
             patch.object(manual, 'trigger_auto_retrain'):
         yield conn
     conn.close()
@@ -49,7 +50,7 @@ def body(group, paths=None, keep=None):
                              paths=paths or ['a', 'b'], keep_paths=['a'] if keep is None else keep)
 
 
-def test_reviewed_rejected_photos_enter_manual_group_without_losing_ratings(db):
+def test_reviewed_photos_enter_manual_group_without_losing_ratings(db):
     group = create()
     feed = manual.fetch_manual_groups(db, None)
     assert feed[0]['group_id'] == group['group_id'] < 0
@@ -90,7 +91,7 @@ def test_stale_member_snapshot_rejected_without_changing_any_photo(db):
     with pytest.raises(HTTPException) as exc:
         manual.confirm_manual_group(body(group, paths=['a', 'b', 'c']), None)
     assert exc.value.status_code == 409
-    assert db.execute('SELECT SUM(is_rejected) FROM photos').fetchone()[0] == 2
+    assert db.execute('SELECT SUM(is_rejected) FROM photos').fetchone()[0] == 1
 
 
 def test_confirmed_group_cannot_be_submitted_again(db):
@@ -126,16 +127,18 @@ def test_partial_visibility_cannot_confirm_or_read(db):
         assert exc.value.status_code == 404
 
 
-def test_multi_user_reset_does_not_change_another_users_rejection(db):
+def test_regrouping_restores_only_current_users_selected_rejections(db):
     for user_id in ('alice', 'bob'):
         db.executemany('INSERT INTO user_preferences (user_id, photo_path, is_rejected) '
                        'VALUES (?, ?, 1)', [(user_id, p) for p in ('a', 'b')])
+    db.execute("INSERT INTO user_preferences (user_id, photo_path, is_rejected) VALUES ('alice', 'c', 1)")
     db.commit()
     with patch.object(manual, 'is_multi_user_enabled', return_value=True):
         create(user=SimpleNamespace(user_id='alice'))
     prefs = {(r[0], r[1]): r[2] for r in db.execute(
         'SELECT user_id, photo_path, is_rejected FROM user_preferences')}
-    assert prefs == {('alice', 'a'): 0, ('alice', 'b'): 0, ('bob', 'a'): 1, ('bob', 'b'): 1}
+    assert prefs == {('alice', 'a'): 0, ('alice', 'b'): 0, ('alice', 'c'): 1,
+                     ('bob', 'a'): 1, ('bob', 'b'): 1}
 
 
 def test_group_scope_never_truncates_members(db):
@@ -151,7 +154,8 @@ def test_unified_confirm_dispatches_manual_before_sequence_guard(db):
     # sqlite's fixture connection owns this thread.
     async def in_thread(fn, *args):
         return fn(*args)
-    with patch('api.routers.burst_culling.asyncio.to_thread', side_effect=in_thread):
+    with patch('api.routers.burst_culling.asyncio.to_thread', side_effect=in_thread), \
+            patch('api.routers.burst_culling.get_db', manual.get_db):
         result = asyncio.run(_dispatch_culling_confirm(body(group), None))
     assert result['kept'] == 1
 
@@ -188,10 +192,12 @@ def test_manual_members_stay_visible_and_out_of_automatic_burst_feed(db):
 def test_manual_members_stay_out_of_recomputed_similarity_groups(db):
     import struct
     from api.similarity_groups import compute_similarity_groups
-    db.execute('UPDATE photos SET clip_embedding = ?, similarity_reviewed = 0',
+    db.execute('UPDATE photos SET clip_embedding = ?, similarity_reviewed = 0, burst_reviewed = 0',
                [struct.pack('2f', 1.0, 0.0)])
     db.commit()
     create()
+    from db.photo_groups import rebuild_similar_groups
+    rebuild_similar_groups(db)
     with patch('api.db_helpers.get_visibility_clause', return_value=('1=1', [])):
         groups = compute_similarity_groups(db, threshold=0.9, min_size=2)
     assert groups
@@ -212,3 +218,46 @@ def test_automatic_burst_detection_and_rescoring_preserve_manual_groups(db, tmp_
     db.execute(_photos_upsert('INSERT OR REPLACE INTO photos (path, filename, aggregate) VALUES (?, ?, ?)'),
                ['a', 'rescored.jpg', 9.0])
     assert db.execute("SELECT burst_group_id FROM photos WHERE path='a'").fetchone()[0] == group['group_id']
+
+
+@pytest.mark.parametrize('remaining', [0, 1, 2])
+def test_default_feed_excludes_rejected_and_hides_finished_groups(db, remaining):
+    group = create(['a', 'b', 'c'])
+    for p in ['a', 'b', 'c'][remaining:]:
+        db.execute('UPDATE photos SET is_rejected = 1 WHERE path = ?', [p])
+    db.commit()
+    before = [tuple(r) for r in db.execute('SELECT * FROM photos')]
+    feed = manual.fetch_manual_groups(db, None)
+    if remaining < 2:
+        assert feed == []
+    else:
+        assert {p['path'] for p in feed[0]['photos']} == {'a', 'b'}
+        assert set(feed[0]['member_paths']) == {'a', 'b', 'c'}
+    assert [tuple(r) for r in db.execute('SELECT * FROM photos')] == before
+    # 显式查看已淘汰照片时仍可复核，不因读取清空分组。
+    assert manual.fetch_manual_groups(db, None, exclude_rejected=False)[0]['group_id'] == group['group_id']
+
+
+def test_confirm_filtered_manual_group_preserves_hidden_rejections(db):
+    group = create(['a', 'b', 'c'])
+    db.execute("UPDATE photos SET is_rejected = 1 WHERE path='c'")
+    db.commit()
+    with patch.object(manual, 'record_culling_decision', return_value=0) as record:
+        result = manual.confirm_manual_group(body(group, ['a', 'b'], ['a']), None)
+    assert result == {'status': 'ok', 'kept': 1, 'rejected': 1}
+    assert dict(db.execute('SELECT path, is_rejected FROM photos')) == {'a': 0, 'b': 1, 'c': 1, 'd': 1}
+    assert record.call_args.args[2] == {'b'}
+    assert manual.fetch_manual_groups(db, None) == []
+
+
+def test_manual_filter_uses_current_users_rejection(db):
+    create(['a', 'b', 'c'])
+    for user_id, rejected in [('alice', ('b', 'c')), ('bob', ('c',))]:
+        db.executemany('INSERT INTO user_preferences (user_id, photo_path, is_rejected) VALUES (?, ?, 1)',
+                       [(user_id, p) for p in rejected])
+    db.commit()
+    with patch('api.routers.burst_culling.is_multi_user_enabled', return_value=True), \
+            patch('api.db_helpers.is_multi_user_enabled', return_value=True):
+        assert manual.fetch_manual_groups(db, SimpleNamespace(user_id='alice')) == []
+        feed = manual.fetch_manual_groups(db, SimpleNamespace(user_id='bob'))
+        assert {p['path'] for p in feed[0]['photos']} == {'a', 'b'}

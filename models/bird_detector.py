@@ -236,6 +236,8 @@ def score_detections(image, detections, min_area_percent=DEFAULT_MIN_AREA_PERCEN
 
 
 class BirdDetector:
+    species = 'bird'
+
     def __init__(self, tiled=True, cancelled=lambda: False):
         self.tiled = tiled
         self.cancelled = cancelled
@@ -257,11 +259,11 @@ class BirdDetector:
         self.model = ssdlite320_mobilenet_v3_large(weights=None, weights_backbone=None)
         self.model.load_state_dict(state)
         self.model.eval()
-        self.bird_label = weights.meta['categories'].index('bird')
+        self.bird_label = weights.meta['categories'].index(self.species)
         # 该轻量模型在处理器运行，保持跨设备结果一致，避免占用其他评分模型的显存。
         torch.set_num_threads(min(4, torch.get_num_threads()))
         from models.bird_instances import BirdInstanceSegmenter
-        self.segmenter = BirdInstanceSegmenter(MODEL_DIR, self.cancelled)
+        self.segmenter = BirdInstanceSegmenter(MODEL_DIR, self.cancelled, species=self.species)
         self.segmenter.load()
 
     def _detect_window(self, image, window):
@@ -312,7 +314,7 @@ class BirdDetector:
         proposals = merge_detections(candidates)
         if self.segmenter is None:
             from models.bird_instances import BirdInstanceSegmenter
-            self.segmenter = BirdInstanceSegmenter(MODEL_DIR, self.cancelled)
+            self.segmenter = BirdInstanceSegmenter(MODEL_DIR, self.cancelled, species=self.species)
         instances = self.segmenter.detect(image, proposals, enhanced=self.tiled)
         # 分割没有确认鸟体时，候选仍供人工查看，但不产生清晰度分数。
         return instances or proposals

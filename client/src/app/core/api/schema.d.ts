@@ -1455,6 +1455,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/culling-groups/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss Culling Group
+         * @description 只清空手动组的成员关联，保留照片其他属性。
+         */
+        post: operations["dismiss_culling_group_api_culling_groups_dismiss_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/culling-groups/manual": {
         parameters: {
             query?: never;
@@ -1496,6 +1516,23 @@ export interface paths {
          *     ``POST /api/scan/detect_panoramas`` triggers.
          */
         post: operations["override_sequence_group_api_culling_groups_override_sequence_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/culling-groups/type": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change Culling Group Type */
+        post: operations["change_culling_group_type_api_culling_groups_type_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1642,6 +1679,91 @@ export interface paths {
          * @description Return available download types for a photo.
          */
         get: operations["api_download_options_api_download_options_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/elephants/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Elephant Job */
+        post: operations["start_elephant_job_api_elephants_jobs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/elephants/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Elephant Job Status */
+        get: operations["elephant_job_status_api_elephants_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/elephants/jobs/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Elephant Job */
+        post: operations["cancel_elephant_job_api_elephants_jobs__job_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/elephants/photo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Elephant Photo */
+        get: operations["elephant_photo_api_elephants_photo_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/elephants/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Elephant Preview */
+        get: operations["elephant_preview_api_elephants_preview_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4656,7 +4778,7 @@ export interface components {
              * @default all
              * @enum {string}
              */
-            group_by?: "all" | "burst" | "similar" | "scene";
+            group_by?: "all" | "burst" | "similar" | "scene" | "bracket" | "panorama" | "hdr_panorama";
             /**
              * Highlights Album
              * @default
@@ -4985,6 +5107,8 @@ export interface components {
             burst_id: number;
             /** Keep Paths */
             keep_paths: string[];
+            /** Paths */
+            paths?: string[] | null;
             /**
              * Seed
              * @default 0
@@ -5414,7 +5538,19 @@ export interface components {
              * Type
              * @enum {string}
              */
-            type: "burst" | "similar" | "scene" | "bracket" | "panorama" | "hdr_panorama" | "manual";
+            type: "burst" | "similar" | "scene" | "bracket" | "panorama" | "hdr_panorama" | "manual_similar" | "manual";
+        };
+        /** CullingDismissBody */
+        CullingDismissBody: {
+            /** Group Id */
+            group_id: number;
+            /** Paths */
+            paths: string[];
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "manual_similar" | "manual";
         };
         /** CullingFacesBody */
         CullingFacesBody: {
@@ -5487,6 +5623,114 @@ export interface components {
         EditionLoginRequest: {
             /** Password */
             password: string;
+        };
+        /** ElephantCancelBody */
+        ElephantCancelBody: {
+            /** Confirm */
+            confirm: boolean;
+        };
+        /** ElephantJob */
+        ElephantJob: {
+            /** Cancel Requested */
+            cancel_requested: number;
+            /** Completed */
+            completed: number;
+            /** Error */
+            error?: string | null;
+            /** Failed */
+            failed: number;
+            /** Id */
+            id: string;
+            /** Phase */
+            phase: string;
+            /** Skipped */
+            skipped: number;
+            /** Status */
+            status: string;
+            /** Succeeded */
+            succeeded: number;
+            /** Total */
+            total: number;
+        };
+        /** ElephantPhotoResult */
+        ElephantPhotoResult: {
+            /** Assessment */
+            assessment?: string | null;
+            /** Assessment Counts */
+            assessment_counts?: {
+                [key: string]: number;
+            } | null;
+            /** Assessment Index */
+            assessment_index?: number | null;
+            /** Assessment Reason */
+            assessment_reason?: string | null;
+            /** Assessment Version */
+            assessment_version?: string | null;
+            /** Bbox */
+            bbox?: number[] | null;
+            /** Best Index */
+            best_index?: number | null;
+            /** Count */
+            count?: number | null;
+            /**
+             * Elephants
+             * @default []
+             */
+            elephants?: {
+                [key: string]: unknown;
+            }[];
+            /** Eligible Count */
+            eligible_count?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Excluded Small Count */
+            excluded_small_count?: number | null;
+            /** Focus Score */
+            focus_score?: number | null;
+            /** Focus Score Index */
+            focus_score_index?: number | null;
+            /** Focus Unverified Count */
+            focus_unverified_count?: number | null;
+            /** Height */
+            height?: number | null;
+            /** Min Area Percent */
+            min_area_percent?: number | null;
+            /**
+             * Outdated
+             * @default false
+             */
+            outdated?: boolean;
+            /** Score */
+            score?: number | null;
+            /**
+             * Stale
+             * @default false
+             */
+            stale?: boolean;
+            /** Status */
+            status?: string | null;
+            /** Width */
+            width?: number | null;
+        };
+        /** ElephantStartBody */
+        ElephantStartBody: {
+            /**
+             * Min Area Percent
+             * @default 1
+             */
+            min_area_percent?: number;
+            /** Paths */
+            paths: string[];
+            /**
+             * Recompute
+             * @default false
+             */
+            recompute?: boolean;
+            /**
+             * Tiled
+             * @default true
+             */
+            tiled?: boolean;
         };
         /** EmbedMetadataRequest */
         EmbedMetadataRequest: {
@@ -5561,6 +5805,18 @@ export interface components {
             gps_longitude?: number | null;
             /** Path */
             path: string;
+        };
+        /** GroupTypeBody */
+        GroupTypeBody: {
+            /** Group Id */
+            group_id: number;
+            /** Paths */
+            paths: string[];
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "manual_similar" | "hdr_panorama" | "panorama" | "bracket" | "burst" | "similar";
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -6334,6 +6590,22 @@ export interface components {
             duplicate_group_id?: number | null;
             /** Dynamic Range Stops */
             dynamic_range_stops?: number | null;
+            /** Elephant Assessment */
+            elephant_assessment?: string | null;
+            /** Elephant Assessment Reason */
+            elephant_assessment_reason?: string | null;
+            /** Elephant Count */
+            elephant_count?: number | null;
+            /** Elephant Focus Score */
+            elephant_focus_score?: number | null;
+            /** Elephant Score Outdated */
+            elephant_score_outdated?: number | null;
+            /** Elephant Sharpness */
+            elephant_sharpness?: number | null;
+            /** Elephant Status */
+            elephant_status?: string | null;
+            /** Elephant Version */
+            elephant_version?: string | null;
             /** Embedding Similarity */
             embedding_similarity?: number | null;
             /** Exposure Score */
@@ -6370,6 +6642,12 @@ export interface components {
             gps_latitude?: number | null;
             /** Gps Longitude */
             gps_longitude?: number | null;
+            /** Group Id */
+            group_id?: number | null;
+            /** Group Source */
+            group_source?: string | null;
+            /** Group Type */
+            group_type?: string | null;
             /** Highlight Clipped */
             highlight_clipped?: number | null;
             /** Histogram Spread */
@@ -10026,6 +10304,39 @@ export interface operations {
             };
         };
     };
+    dismiss_culling_group_api_culling_groups_dismiss_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CullingDismissBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     save_manual_group_api_culling_groups_manual_post: {
         parameters: {
             query?: never;
@@ -10069,6 +10380,39 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SequenceOverrideBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_culling_group_type_api_culling_groups_type_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupTypeBody"];
             };
         };
         responses: {
@@ -10230,6 +10574,168 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DownloadOptionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_elephant_job_api_elephants_jobs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ElephantStartBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElephantJob"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    elephant_job_status_api_elephants_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElephantJob"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_elephant_job_api_elephants_jobs__job_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ElephantCancelBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElephantJob"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    elephant_photo_api_elephants_photo_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ElephantPhotoResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    elephant_preview_api_elephants_preview_get: {
+        parameters: {
+            query: {
+                path: string;
+                index?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

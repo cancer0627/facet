@@ -269,6 +269,7 @@ export class App implements OnInit {
     { minKey: 'min_qrealign', maxKey: 'max_qrealign', labelKey: 'gallery.qrealign_range' },
     { minKey: 'min_aesthetic_v25', maxKey: 'max_aesthetic_v25', labelKey: 'gallery.aesthetic_v25_range' },
     { minKey: 'min_deqa', maxKey: 'max_deqa', labelKey: 'gallery.deqa_range' },
+    { minKey: 'min_elephant_sharpness', maxKey: 'max_elephant_sharpness', labelKey: 'elephants.focus_score' },
     { minKey: 'min_subject_sharpness', maxKey: 'max_subject_sharpness', labelKey: 'gallery.subject_sharpness_range' },
     { minKey: 'min_subject_prominence', maxKey: 'max_subject_prominence', labelKey: 'gallery.subject_prominence_range' },
     { minKey: 'min_subject_placement', maxKey: 'max_subject_placement', labelKey: 'gallery.subject_placement_range' },

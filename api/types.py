@@ -51,7 +51,7 @@ SORT_OPTIONS, SORT_OPTIONS_GROUPED = _build_sort_options()
 # stored photos columns: top_picks_score is an on-the-fly weighted expression and
 # learned_score comes from the personal-ranker learned_scores table (opt-in
 # alternate sort; NULL when the ranker hasn't been trained).
-VALID_SORT_COLS = [opt[0] for opt in SORT_OPTIONS] + ['top_picks_score', 'learned_score']
+VALID_SORT_COLS = [opt[0] for opt in SORT_OPTIONS] + ['top_picks_score', 'learned_score', 'elephant_sharpness']
 
 
 # --- SEMANTIC FILTER MAPPINGS ---

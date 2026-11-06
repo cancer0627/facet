@@ -38,7 +38,7 @@ class TestSchemaMigrationLadder:
 
         assert _user_version(db) == SCHEMA_VERSION
         conn = sqlite3.connect(db)
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(photos)").fetchall()}
+        cols = {r[1] for r in conn.execute("PRAGMA table_xinfo(photos)").fetchall()}
         row = conn.execute(
             "SELECT filename, aggregate FROM photos WHERE path = '/a.jpg'"
         ).fetchone()

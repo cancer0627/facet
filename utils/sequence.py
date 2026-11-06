@@ -220,7 +220,7 @@ def _load_photos(conn):
     rows = conn.execute(
         "SELECT path, date_taken, camera_model, f_stop, shutter_speed, iso, phash, "
         "shadow_clipped, highlight_clipped "
-        "FROM photos WHERE date_taken IS NOT NULL ORDER BY date_taken, path"
+        "FROM photos WHERE date_taken IS NOT NULL AND COALESCE(group_source,'auto') != 'manual' ORDER BY date_taken, path"
     ).fetchall()
     photos = []
     for row in rows:
@@ -357,27 +357,21 @@ def detect_sequences(db_path, config_path=None):
 
         runs = _find_bracket_runs(photos, settings)
 
-        previously_promoted = _wholly_bracketed_groups(conn)
-        # Scoped to this pass's own kind. Clearing every labelled row would wipe
-        # the panorama pass's labels on each bracket run, and vice versa: the two
-        # passes share these columns but own disjoint sets of rows.
-        conn.execute(
-            "UPDATE photos SET sequence_group_id = NULL, sequence_kind = NULL, "
-            "sequence_ev_offset = NULL WHERE sequence_kind = ?",
-            (BRACKET,),
-        )
-        # Numbered from 1 within this kind; see the module docstring on why the
-        # set identity is (sequence_kind, sequence_group_id) and not the id alone.
-        for group_id, run in enumerate(runs, start=1):
+        from db.photo_groups import assign_auto_groups, rebuild_similar_groups
+        candidates = []
+        for run in runs:
             base_ev = _base_frame(run)['ev']
-            conn.executemany(
-                "UPDATE photos SET sequence_group_id = ?, sequence_kind = ?, "
-                "sequence_ev_offset = ? WHERE path = ?",
-                [(group_id, BRACKET, _compensation_offset(base_ev, p['ev']), p['path']) for p in run],
-            )
-
-        promoted, demoted = _promote_bracket_leads(conn, previously_promoted)
+            offsets = {p['path']:_compensation_offset(base_ev,p['ev']) for p in run}
+            candidates.append({'kind':BRACKET,'paths':[p['path'] for p in run],
+                               'lead':min(run,key=lambda p:abs(offsets[p['path']]))['path'],'offsets':offsets})
+        previous = conn.execute("SELECT COUNT(DISTINCT group_id) FROM photos WHERE group_type='bracket' AND COALESCE(group_source,'auto')!='manual'").fetchone()[0]
+        assigned = assign_auto_groups(conn,candidates,[BRACKET])
+        rebuild_similar_groups(conn)
+        promoted, demoted = len(assigned), max(0, previous-len(assigned))
         conn.commit()
+
+    from processing.scorer import process_bursts
+    process_bursts(db_path, config_path=config_path, only_unassigned=True)
 
     framed = sum(len(r) for r in runs)
     logger.info(

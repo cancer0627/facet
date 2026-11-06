@@ -34,22 +34,22 @@ const JOB_STORAGE_KEY = 'facet_bird_detection_job';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [MatDialogModule, MatButtonModule, MatCheckboxModule, MatProgressBarModule, TranslatePipe],
   template: `
-    <h2 mat-dialog-title>{{ 'birds.title' | translate }}</h2>
+    <h2 mat-dialog-title>{{ (labels + '.title') | translate }}</h2>
     <mat-dialog-content class="!pt-2">
       @if (job(); as j) {
-        <p class="mb-3">{{ ('birds.phase.' + j.phase) | translate }}</p>
+        <p class="mb-3">{{ (labels + '.phase.' + j.phase) | translate }}</p>
         <mat-progress-bar [mode]="j.phase === 'loading_model' ? 'indeterminate' : 'determinate'"
                           [value]="j.total ? j.completed / j.total * 100 : 0" />
-        <p class="mt-3">{{ 'birds.progress' | translate:{ completed: j.completed, total: j.total } }}</p>
-        <p class="mt-2 text-sm opacity-70">{{ 'birds.counts' | translate:{ succeeded: j.succeeded, skipped: j.skipped, failed: j.failed } }}</p>
-        @if (j.cancel_requested && active()) { <p class="mt-3">{{ 'birds.stopping' | translate }}</p> }
+        <p class="mt-3">{{ (labels + '.progress') | translate:{ completed: j.completed, total: j.total } }}</p>
+        <p class="mt-2 text-sm opacity-70">{{ (labels + '.counts') | translate:{ succeeded: j.succeeded, skipped: j.skipped, failed: j.failed } }}</p>
+        @if (j.cancel_requested && active()) { <p class="mt-3">{{ (labels + '.stopping') | translate }}</p> }
         @if (j.error) { <p role="alert" class="mt-3 text-[var(--mat-sys-error)]">{{ j.error }}</p> }
-        <p class="text-sm opacity-70 mt-3">{{ 'birds.resume_hint' | translate }}</p>
+        <p class="text-sm opacity-70 mt-3">{{ (labels + '.resume_hint') | translate }}</p>
       } @else {
-        <p class="mb-3">{{ 'birds.description' | translate:{ count: data.paths.length } }}</p>
-        <p class="text-sm opacity-70 mb-3">{{ 'birds.focus_score_hint' | translate }}</p>
+        <p class="mb-3">{{ (labels + '.description') | translate:{ count: data.paths.length } }}</p>
+        <p class="text-sm opacity-70 mb-3">{{ (labels + '.focus_score_hint') | translate }}</p>
         <label class="block mb-2">
-          {{ 'birds.min_area' | translate }}
+          {{ (labels + '.min_area') | translate }}
           <select class="ml-2 p-1 rounded bg-[var(--mat-sys-surface)]" [disabled]="busy()"
                   [value]="minAreaPercent()" (change)="setMinArea($event)">
             @for (option of areaOptions; track option.value) {
@@ -57,13 +57,13 @@ const JOB_STORAGE_KEY = 'facet_bird_detection_job';
             }
           </select>
         </label>
-        <p class="text-xs opacity-70 mb-3">{{ 'birds.min_area_hint' | translate }}</p>
+        <p class="text-xs opacity-70 mb-3">{{ (labels + '.min_area_hint') | translate }}</p>
         <mat-checkbox [checked]="tiled()" (change)="tiled.set($event.checked)" [disabled]="busy()">
-          {{ 'birds.tiled' | translate }}
+          {{ (labels + '.tiled') | translate }}
         </mat-checkbox>
-        <p class="text-xs opacity-70 mb-2">{{ 'birds.tiled_hint' | translate }}</p>
+        <p class="text-xs opacity-70 mb-2">{{ (labels + '.tiled_hint') | translate }}</p>
         <mat-checkbox [checked]="recompute()" (change)="recompute.set($event.checked)" [disabled]="busy()">
-          {{ 'birds.recompute' | translate }}
+          {{ (labels + '.recompute') | translate }}
         </mat-checkbox>
       }
       @if (error()) { <p role="alert" class="mt-3 text-[var(--mat-sys-error)]">{{ error() | translate }}</p> }
@@ -71,24 +71,27 @@ const JOB_STORAGE_KEY = 'facet_bird_detection_job';
     <mat-dialog-actions align="end">
       @if (job(); as j) {
         @if (active()) {
-          <button mat-button [disabled]="!!j.cancel_requested || busy()" (click)="stop()">{{ 'birds.stop' | translate }}</button>
-          <button mat-button (click)="finish(false)">{{ 'birds.background' | translate }}</button>
+          <button mat-button [disabled]="!!j.cancel_requested || busy()" (click)="stop()">{{ (labels + '.stop') | translate }}</button>
+          <button mat-button (click)="finish(false)">{{ (labels + '.background') | translate }}</button>
         } @else {
-          <button mat-button (click)="reset()">{{ 'birds.run_again' | translate }}</button>
+          <button mat-button (click)="reset()">{{ (labels + '.run_again') | translate }}</button>
           <button mat-button (click)="finish(false)">{{ 'dialog.close' | translate }}</button>
-          <button mat-flat-button [disabled]="!j.completed" (click)="finish(true)">{{ 'birds.view_results' | translate }}</button>
+          <button mat-flat-button [disabled]="!j.completed" (click)="finish(true)">{{ (labels + '.view_results') | translate }}</button>
         }
       } @else {
         <button mat-button mat-dialog-close [disabled]="busy()">{{ 'ui.buttons.cancel' | translate }}</button>
-        <button mat-flat-button [disabled]="busy() || !data.paths.length" (click)="start()">{{ 'birds.start' | translate }}</button>
+        <button mat-flat-button [disabled]="busy() || !data.paths.length" (click)="start()">{{ (labels + '.start') | translate }}</button>
       }
     </mat-dialog-actions>
   `,
 })
 export class BirdDetectionDialogComponent {
   private readonly api = inject(ApiService);
+  protected readonly labels: 'birds' | 'elephants';
+  private readonly endpoint: string;
+  private readonly storageKey: string;
   private readonly ref = inject(MatDialogRef<BirdDetectionDialogComponent>);
-  protected readonly data = inject<{ paths: string[] }>(MAT_DIALOG_DATA);
+  protected readonly data = inject<{ paths: string[]; species?: 'bird' | 'elephant' }>(MAT_DIALOG_DATA);
   protected readonly tiled = signal(true);
   protected readonly recompute = signal(false);
   protected readonly minAreaPercent = signal(1);
@@ -105,11 +108,14 @@ export class BirdDetectionDialogComponent {
   private disposed = false;
 
   constructor() {
+    this.labels = this.data.species === 'elephant' ? 'elephants' : 'birds';
+    this.endpoint = '/' + this.labels;
+    this.storageKey = this.labels === 'birds' ? JOB_STORAGE_KEY : 'facet_elephant_detection_job';
     inject(DestroyRef).onDestroy(() => {
       this.disposed = true;
       clearTimeout(this.timer);
     });
-    const existing = sessionStorage.getItem(JOB_STORAGE_KEY);
+    const existing = sessionStorage.getItem(this.storageKey);
     if (existing) {
       this.busy.set(true);
       void this.poll(existing).finally(() => this.busy.set(false));
@@ -122,15 +128,15 @@ export class BirdDetectionDialogComponent {
     this.ref.disableClose = true;
     this.error.set('');
     try {
-      const job = await firstValueFrom(this.api.post<BirdJob>('/birds/jobs', {
+      const job = await firstValueFrom(this.api.post<BirdJob>(this.endpoint + '/jobs', {
         paths: this.data.paths, tiled: this.tiled(), recompute: this.recompute(),
         min_area_percent: this.minAreaPercent(),
       }));
-      sessionStorage.setItem(JOB_STORAGE_KEY, job.id);
+      sessionStorage.setItem(this.storageKey, job.id);
       this.job.set(job);
       await this.poll(job.id);
     } catch (err) {
-      this.error.set(err instanceof HttpErrorResponse && err.status === 409 ? 'birds.busy' : 'birds.start_error');
+      this.error.set(err instanceof HttpErrorResponse && err.status === 409 ? (this.labels + '.busy') : (this.labels + '.start_error'));
     } finally {
       this.busy.set(false);
       this.ref.disableClose = false;
@@ -144,7 +150,7 @@ export class BirdDetectionDialogComponent {
 
   private async poll(id: string): Promise<void> {
     try {
-      const job = await firstValueFrom(this.api.get<BirdJob>('/birds/jobs/' + id));
+      const job = await firstValueFrom(this.api.get<BirdJob>(this.endpoint + '/jobs/' + id));
       if (this.disposed) return;
       this.job.set(job);
       this.error.set('');
@@ -152,10 +158,10 @@ export class BirdDetectionDialogComponent {
     } catch (err) {
       if (this.disposed) return;
       if (err instanceof HttpErrorResponse && err.status === 404) {
-        sessionStorage.removeItem(JOB_STORAGE_KEY);
+        sessionStorage.removeItem(this.storageKey);
         this.job.set(null);
       } else {
-        this.error.set('birds.progress_error');
+        this.error.set(this.labels + '.progress_error');
         this.timer = setTimeout(() => void this.poll(id), 3000);
       }
     }
@@ -166,9 +172,9 @@ export class BirdDetectionDialogComponent {
     if (!job || this.busy()) return;
     this.busy.set(true);
     try {
-      this.job.set(await firstValueFrom(this.api.post<BirdJob>('/birds/jobs/' + job.id + '/cancel', { confirm: true })));
+      this.job.set(await firstValueFrom(this.api.post<BirdJob>(this.endpoint + '/jobs/' + job.id + '/cancel', { confirm: true })));
     } catch {
-      this.error.set('birds.progress_error');
+      this.error.set(this.labels + '.progress_error');
     } finally {
       this.busy.set(false);
     }
@@ -176,7 +182,7 @@ export class BirdDetectionDialogComponent {
 
   protected reset(): void {
     clearTimeout(this.timer);
-    sessionStorage.removeItem(JOB_STORAGE_KEY);
+    sessionStorage.removeItem(this.storageKey);
     this.job.set(null);
     this.error.set('');
   }

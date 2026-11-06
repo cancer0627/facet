@@ -33,6 +33,7 @@ import { I18N_KEYS } from '../../core/i18n/keys';
 
 export const ADDITIONAL_FILTERS: AdditionalFilterDef[] = [
   { id: 'bird_sharpness_range', labelKey: 'birds.focus_score', sectionKey: 'gallery.sidebar.saliency', minKey: 'min_bird_sharpness', maxKey: 'max_bird_sharpness', sliderMin: 0, sliderMax: 10, step: 0.5, spanWidth: 'w-16' },
+  { id: 'elephant_sharpness_range', labelKey: 'elephants.focus_score', sectionKey: 'gallery.sidebar.saliency', minKey: 'min_elephant_sharpness', maxKey: 'max_elephant_sharpness', sliderMin: 0, sliderMax: 10, step: 0.5, spanWidth: 'w-16' },
   // Quality
   { id: 'score_range', labelKey: 'gallery.score_range', sectionKey: 'gallery.sidebar.quality', minKey: 'min_score', maxKey: 'max_score', sliderMin: 0, sliderMax: 10, step: 0.5, spanWidth: 'w-16' },
   { id: 'aesthetic_range', labelKey: 'gallery.aesthetic_range', sectionKey: 'gallery.sidebar.quality', minKey: 'min_aesthetic', maxKey: 'max_aesthetic', sliderMin: 0, sliderMax: 10, step: 0.5, spanWidth: 'w-16' },
@@ -305,6 +306,30 @@ function saveSectionStates(states: Record<string, boolean>): void {
             <mat-option value="">{{ I18N.birds.all_results | translate }}</mat-option>
             @for (status of ['scored', 'no_bird', 'unjudgeable', 'error', 'unprocessed']; track status) {
               <mat-option [value]="status">{{ ('birds.photo_status.' + status) | translate }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+      </mat-expansion-panel>
+
+      <mat-expansion-panel class="!mb-1 mt-1" [expanded]="sectionStates()['elephants'] !== false"
+                           (opened)="onSectionToggle('elephants', true)"
+                           (closed)="onSectionToggle('elephants', false)"
+                           [style.background-color]="sectionStates()['elephants'] !== false ? 'var(--mat-sys-surface-container)' : null">
+        <mat-expansion-panel-header>
+          <mat-panel-title class="flex items-center gap-2">
+            <mat-icon class="!text-base !w-5 !h-5 !leading-5 opacity-60">center_focus_strong</mat-icon>
+            {{ I18N.elephants.status_filter | translate }}
+            @if (sectionActiveCounts()['elephants']) {
+              <span class="text-xs rounded-full min-w-[1.25rem] h-5 px-1.5 flex items-center justify-center bg-[var(--mat-sys-primary)] text-[var(--mat-sys-on-primary)] leading-none">{{ sectionActiveCounts()['elephants'] }}</span>
+            }
+          </mat-panel-title>
+        </mat-expansion-panel-header>
+        <mat-form-field subscriptSizing="dynamic" class="w-full mb-2">
+          <mat-label>{{ I18N.elephants.status_filter | translate }}</mat-label>
+          <mat-select [value]="store.filters().elephant_status" (selectionChange)="store.updateFilter('elephant_status', $event.value)">
+            <mat-option value="">{{ I18N.elephants.all_results | translate }}</mat-option>
+            @for (status of ['scored', 'no_elephant', 'unjudgeable', 'error', 'unprocessed']; track status) {
+              <mat-option [value]="status">{{ ('elephants.photo_status.' + status) | translate }}</mat-option>
             }
           </mat-select>
         </mat-form-field>
@@ -1064,6 +1089,7 @@ export class GalleryFilterSidebarComponent {
       equipment: (f.camera ? 1 : 0) + (f.lens ? 1 : 0),
       persons: f.person_id ? f.person_id.split(',').length : 0,
       birds: f.bird_status ? 1 : 0,
+      elephants: f.elephant_status ? 1 : 0,
       refine: (f.favorites_only ? 1 : 0) + (f.is_monochrome ? 1 : 0) + (f.hide_rejected ? 1 : 0)
         + (f.sequence_override ? 1 : 0),
       folder: f.path_prefix ? 1 : 0,

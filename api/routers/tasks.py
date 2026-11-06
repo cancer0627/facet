@@ -68,11 +68,11 @@ def _library_tasks(bird_pids=(), user=None):
             current=progress.get('current'), total=progress.get('total'),
             can_terminate=running and not state.get('termination_requested', False) and _can_control_library(state, user),
         ))
-    bird_holder = holder and holder.get('kind') == 'bird detection' and holder.get('pid') in bird_pids
+    bird_holder = holder and holder.get('kind') in ('bird detection', 'elephant detection') and holder.get('pid') in bird_pids
     if holder and not bird_holder and not (state['running'] and local_pid == holder.get('pid')):
         tasks.append(BackgroundTask(
             id=f"library:{holder.get('pid')}:{holder.get('started_at')}",
-            kind='birds' if holder.get('kind') == 'bird detection' else (holder.get('kind') or 'maintenance'),
+            kind={'bird detection': 'birds', 'elephant detection': 'elephants'}.get(holder.get('kind'), holder.get('kind') or 'maintenance'),
             status='running',
             started_at=holder.get('started_at'),
         ))
@@ -107,22 +107,29 @@ def background_tasks(user: CurrentUser = Depends(require_edition)):
         columns = 'id,status,phase,total,completed,succeeded,failed,skipped,cancel_requested,error,created_at,pid'
         owner = "COALESCE(user_id, '') = ?"
         params = (user.user_id or '',)
-        rows = conn.execute(
-            f'SELECT {columns} FROM bird_detection_jobs WHERE {owner} '
-            "AND status NOT IN ('completed','cancelled','failed')", params,
-        ).fetchall()
-        rows += conn.execute(
-            f'SELECT {columns} FROM bird_detection_jobs WHERE {owner} '
-            "AND status IN ('completed','cancelled','failed') ORDER BY created_at DESC LIMIT 50", params,
-        ).fetchall()
+        rows = []
+        for kind, table in (('birds', 'bird_detection_jobs'), ('elephants', 'elephant_detection_jobs')):
+            active_rows = conn.execute(
+                f'SELECT {columns} FROM {table} WHERE {owner} '
+                "AND status NOT IN ('completed','cancelled','failed')", params,
+            ).fetchall()
+            finished_rows = conn.execute(
+                f'SELECT {columns} FROM {table} WHERE {owner} '
+                "AND status IN ('completed','cancelled','failed') ORDER BY created_at DESC LIMIT 50", params,
+            ).fetchall()
+            rows.extend({**dict(row), '_kind': kind} for row in [*active_rows, *finished_rows])
     tasks = _library_tasks({row['pid'] for row in rows if row['status'] not in TERMINAL}, user)
     for row in rows:
         job = dict(row)
         if job['status'] not in TERMINAL:
             # 复用单任务查询的存活检查，避免服务重启后把已退出进程永远显示为运行中。
-            job.update(_owned_job(job['id'], user))
+            if job['_kind'] == 'elephants':
+                from api.routers.elephants import _owned_job as owned_elephant_job
+                job.update(owned_elephant_job(job['id'], user))
+            else:
+                job.update(_owned_job(job['id'], user))
         tasks.append(BackgroundTask(
-            id=job['id'], kind='birds',
+            id=job['id'], kind=job['_kind'],
             status='stopping' if job['cancel_requested'] and job['status'] not in TERMINAL else job['status'],
             phase=job['phase'], current=job['completed'], total=job['total'],
             started_at=job['created_at'], succeeded=job['succeeded'], failed=job['failed'],
@@ -160,7 +167,13 @@ def terminate_task(task_id: str, body: TaskTerminateBody, user: CurrentUser = De
     else:
         from api.routers.birds import BirdCancelBody, cancel_bird_job
 
-        cancel_bird_job(task_id, BirdCancelBody(confirm=True), user)
+        from processing.elephant_detection import get_job as get_elephant_job
+
+        if get_elephant_job(DEFAULT_DB_PATH, task_id):
+            from api.routers.elephants import ElephantCancelBody, cancel_elephant_job
+            cancel_elephant_job(task_id, ElephantCancelBody(confirm=True), user)
+        else:
+            cancel_bird_job(task_id, BirdCancelBody(confirm=True), user)
     # 使用统一列表中的状态，避免操作返回值与刷新后的状态出现分歧。
     task = next((task for task in background_tasks(user).tasks if task.id == task_id), None)
     if task is None:

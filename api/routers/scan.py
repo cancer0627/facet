@@ -123,10 +123,13 @@ def _read_scan_output(proc):
             _scan_state['output_lines'].append(line)
     proc.wait()
     _scan_state['exit_code'] = proc.returncode
-    _scan_state['running'] = False
     # Invalidate caches after scan adds/updates photos
     _photo_types_cache['expires'] = 0
     _stats_cache.clear()
+    # 检测会改写分组和修正状态；下一次页面加载必须读取新结果。
+    from api.routers.burst_culling import _invalidate_culling_groups_cache
+    _invalidate_culling_groups_cache()
+    _scan_state['running'] = False
 
 
 class ScanStartRequest(BaseModel):
